@@ -1,0 +1,7 @@
+#!/bin/sh
+set -e
+# Autostart is opt-in; we never enable services on the user's behalf.
+echo "ccontrol installed. To start it for your user now and at login:"
+echo "    systemctl --user enable --now ccontrol-agent"
+echo "Then run 'ccontrol-agent ui' to pair a phone."
+exit 0

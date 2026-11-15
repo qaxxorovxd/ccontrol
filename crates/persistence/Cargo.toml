@@ -1,0 +1,15 @@
+[package]
+name = "ccontrol-persistence"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "SQLite trust store and audit log for the desktop agent"
+
+[dependencies]
+ccontrol-protocol.workspace = true
+rusqlite = { version = "0.32", features = ["bundled"] }
+serde_json.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile = "3"

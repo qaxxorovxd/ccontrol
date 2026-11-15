@@ -1,0 +1,46 @@
+[package]
+name = "ccontrol-agent"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "ccontrol desktop background agent"
+
+[lib]
+name = "ccontrol_agent"
+path = "src/lib.rs"
+
+[[bin]]
+name = "ccontrol-agent"
+path = "src/main.rs"
+
+[dependencies]
+ccontrol-protocol.workspace = true
+ccontrol-security.workspace = true
+ccontrol-persistence.workspace = true
+ccontrol-discovery.workspace = true
+ccontrol-capabilities.workspace = true
+ccontrol-system-control.workspace = true
+tokio.workspace = true
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+axum = { version = "0.8", default-features = false, features = ["http1", "json", "tokio", "query"] }
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json", "fmt"] }
+tracing-appender = "0.2"
+clap = { version = "4", features = ["derive"] }
+directories = "6"
+qrcode = { version = "0.14", default-features = false, features = ["svg"] }
+if-addrs = "0.13"
+hex.workspace = true
+rand.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+winreg = "0.55"
+windows = { version = "0.61", features = ["Win32_System_Console"] }
+
+[dev-dependencies]
+tempfile = "3"

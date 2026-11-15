@@ -1,0 +1,16 @@
+[Unit]
+Description=ccontrol desktop agent (per-user)
+Documentation=https://github.com/ccontrol/ccontrol
+After=graphical-session.target pipewire.service
+PartOf=graphical-session.target
+
+[Service]
+ExecStart=/usr/bin/ccontrol-agent run
+Restart=on-failure
+RestartSec=3
+# The agent needs the user's D-Bus session and PipeWire/Pulse sockets; it never runs as root.
+NoNewPrivileges=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=graphical-session.target default.target

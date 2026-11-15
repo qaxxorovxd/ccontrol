@@ -1,0 +1,158 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  rust:
+    name: rust (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2022]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - run: cargo test --workspace --locked
+      - run: cargo build --release --locked -p ccontrol-agent
+      - uses: actions/upload-artifact@v4
+        with:
+          name: agent-${{ runner.os }}
+          path: |
+            target/release/ccontrol-agent
+            target/release/ccontrol-agent.exe
+          if-no-files-found: error
+
+  android:
+    runs-on: ubuntu-24.04
+    needs: rust
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: android-actions/setup-android@v3
+      - run: sdkmanager "platforms;android-37.0" "build-tools;36.0.0"
+      - uses: actions/download-artifact@v4
+        with:
+          name: agent-Linux
+          path: agent-bin
+      - name: Unit + Kotlin/Rust interop tests
+        working-directory: android
+        run: |
+          chmod +x ../agent-bin/ccontrol-agent
+          CCONTROL_AGENT_BIN=$GITHUB_WORKSPACE/agent-bin/ccontrol-agent ./gradlew --no-daemon :core:testDebugUnitTest :app:lintDebug
+      - name: Build APKs
+        working-directory: android
+        env:
+          CCONTROL_KEYSTORE_B64: ${{ secrets.CCONTROL_KEYSTORE_B64 }}
+          CCONTROL_KEYSTORE_PASSWORD: ${{ secrets.CCONTROL_KEYSTORE_PASSWORD }}
+          CCONTROL_KEY_ALIAS: ${{ secrets.CCONTROL_KEY_ALIAS }}
+          CCONTROL_KEY_PASSWORD: ${{ secrets.CCONTROL_KEY_PASSWORD }}
+        run: |
+          if [ -n "$CCONTROL_KEYSTORE_B64" ]; then
+            echo "$CCONTROL_KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.jks"
+            export CCONTROL_KEYSTORE="$RUNNER_TEMP/release.jks"
+          fi
+          ./gradlew --no-daemon :app:assembleDebug :app:assembleRelease
+          mkdir -p ../dist
+          if [ -f app/build/outputs/apk/release/app-release.apk ]; then
+            cp app/build/outputs/apk/release/app-release.apk ../dist/ccontrol-android-arm64.apk
+          else
+            echo "::warning::No signing secrets: publishing the debug-signed APK"
+            cp app/build/outputs/apk/debug/app-debug.apk ../dist/ccontrol-android-arm64.apk
+          fi
+      - uses: actions/upload-artifact@v4
+        with: { name: apk, path: dist/*.apk, if-no-files-found: error }
+
+  linux-packages:
+    runs-on: ubuntu-24.04
+    needs: rust
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { name: agent-Linux, path: agent-bin }
+      - name: .deb
+        run: |
+          chmod +x agent-bin/ccontrol-agent
+          packaging/debian/build-deb.sh agent-bin/ccontrol-agent "$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)" dist
+          dpkg-deb --info dist/ccontrol-amd64.deb
+          sudo apt-get install -y ./dist/ccontrol-amd64.deb
+          ccontrol-agent --version
+          sudo apt-get remove -y ccontrol
+      - name: AppImage
+        run: |
+          sudo apt-get install -y libfuse2
+          curl -fsSL -o appimagetool https://github.com/AppImage/appimagetool/releases/download/1.9.0/appimagetool-x86_64.AppImage
+          chmod +x appimagetool && sudo mv appimagetool /usr/local/bin/
+          packaging/appimage/build-appimage.sh agent-bin/ccontrol-agent dist
+          ./dist/ccontrol-x86_64.AppImage --version
+      - uses: actions/upload-artifact@v4
+        with: { name: linux-packages, path: dist/*, if-no-files-found: error }
+
+  rpm:
+    runs-on: ubuntu-24.04
+    container: fedora:42
+    steps:
+      - run: dnf install -y git rpm-build cargo rust gcc systemd-rpm-macros tar
+      - uses: actions/checkout@v4
+      - run: |
+          V=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
+          mkdir -p ~/rpmbuild/SOURCES
+          git config --global --add safe.directory "$PWD"
+          git archive --prefix=ccontrol-$V/ -o ~/rpmbuild/SOURCES/ccontrol-$V.tar.gz HEAD
+          rpmbuild -ba packaging/fedora/ccontrol.spec
+          mkdir -p dist && cp ~/rpmbuild/RPMS/x86_64/*.rpm dist/
+      - uses: actions/upload-artifact@v4
+        with: { name: rpm, path: dist/*.rpm }
+
+  windows-installer:
+    runs-on: windows-2022
+    needs: rust
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { name: agent-Windows, path: target/release }
+      - run: choco install innosetup -y --no-progress
+      - shell: pwsh
+        run: |
+          $v = (Select-String -Path Cargo.toml -Pattern '^version = "(.+)"').Matches[0].Groups[1].Value
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /Q "/DAppVersion=$v" packaging\windows\ccontrol.iss
+          # Smoke test: silent per-user install, run, uninstall.
+          Start-Process dist\ccontrol-Setup-x64.exe -ArgumentList '/VERYSILENT','/CURRENTUSER',"/DIR=$env:RUNNER_TEMP\cc" -Wait
+          & "$env:RUNNER_TEMP\cc\ccontrol-agent.exe" --version
+          Start-Process "$env:RUNNER_TEMP\cc\unins000.exe" -ArgumentList '/VERYSILENT' -Wait
+      - uses: actions/upload-artifact@v4
+        with: { name: windows-installer, path: dist/*.exe, if-no-files-found: error }
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [android, linux-packages, rpm, windows-installer]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { path: dist, merge-multiple: true }
+      - run: scripts/checksums.sh dist
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true

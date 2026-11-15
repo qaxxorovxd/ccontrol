@@ -1,0 +1,4 @@
+-keepattributes *Annotation*, InnerClasses
+-keep,includedescriptorclasses class dev.ccontrol.core.**$$serializer { *; }
+-keepclassmembers class dev.ccontrol.core.** { *** Companion; }
+-keepclasseswithmembers class dev.ccontrol.core.** { kotlinx.serialization.KSerializer serializer(...); }

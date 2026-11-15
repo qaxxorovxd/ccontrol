@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'">
+<title>ccontrol agent</title>
+<style>
+:root{--bg:#0b0b0d;--panel:#141418;--line:#24242b;--text:#e8e8ee;--muted:#8a8a96;--accent:#8b7cff;--cyan:#38d6e8;--ok:#3ecf8e;--warn:#f5a524;--bad:#ff5d6c}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif}
+main{max-width:960px;margin:0 auto;padding:24px 16px 48px}
+h1{font-size:20px;margin:0 0 4px;font-weight:600}
+h2{font-size:13px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin:28px 0 10px;font-weight:600}
+.sub{color:var(--muted)}
+.mono{font-family:ui-monospace,Consolas,monospace}
+.grid{display:grid;grid-template-columns:260px 1fr;gap:16px}
+@media(max-width:720px){.grid{grid-template-columns:1fr}}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px}
+.qr{background:#fff;border-radius:8px;padding:8px;display:flex;justify-content:center}
+.qr svg{width:100%;height:auto}
+.row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 0;border-top:1px solid var(--line)}
+.row:first-child{border-top:0}
+.pill{display:inline-block;padding:2px 8px;border-radius:999px;font-size:12px;border:1px solid var(--line);color:var(--muted)}
+.pill.on{color:var(--ok);border-color:#1f5e44}
+.pill.off{color:var(--bad);border-color:#5e1f27}
+.sas{font:600 32px ui-monospace,Consolas,monospace;letter-spacing:.2em;color:var(--cyan)}
+button{background:#22222a;color:var(--text);border:1px solid var(--line);border-radius:8px;padding:8px 14px;font:inherit;cursor:pointer}
+button.primary{background:var(--accent);border-color:var(--accent);color:#0b0b0d;font-weight:600}
+button.danger{color:var(--bad)}
+.scopes{display:flex;flex-wrap:wrap;gap:6px 14px;margin:10px 0}
+.scopes label{display:flex;gap:6px;align-items:center;font-size:13px}
+.risk{color:var(--warn)}
+.empty{color:var(--muted);padding:8px 0}
+table{width:100%;border-collapse:collapse;font-size:13px}
+td{padding:6px 4px;border-top:1px solid var(--line);vertical-align:top}
+.err{color:var(--bad)}
+</style>
+</head>
+<body>
+<main>
+  <h1 id="name">ccontrol agent</h1>
+  <div class="sub">Device ID <span id="sid" class="mono"></span> · agent keeps running when this page is closed</div>
+  <div id="error" class="err"></div>
+
+  <h2>Pair a phone</h2>
+  <div class="grid">
+    <div class="card"><div id="qr" class="qr"></div></div>
+    <div class="card">
+      <p>Open <b>ccontrol</b> on Android → <b>Add computer</b> → scan this code or choose this computer from the list.</p>
+      <p class="sub">Address: <span id="addr" class="mono"></span></p>
+      <p class="sub">Every request must be approved here, after checking that the 6-digit code matches the phone.</p>
+    </div>
+  </div>
+
+  <h2>Pending requests</h2>
+  <div id="pending" class="card"></div>
+
+  <h2>Trusted controllers</h2>
+  <div id="controllers" class="card"></div>
+
+  <h2>Capabilities</h2>
+  <div class="card"><table id="caps"></table></div>
+
+  <h2>Recent activity</h2>
+  <div class="card"><table id="audit"></table></div>
+</main>
+<script>
+"use strict";
+const token = (location.hash.match(/token=([0-9a-f]+)/) || [])[1] || sessionStorage.getItem("t") || "";
+if (token) { sessionStorage.setItem("t", token); history.replaceState(null, "", "/"); }
+const H = {"x-ccontrol-token": token, "content-type": "application/json"};
+function el(tag, attrs, ...kids){ const e=document.createElement(tag); for(const [k,v] of Object.entries(attrs||{})){ if(k==="class") e.className=v; else if(k.startsWith("on")) e.addEventListener(k.slice(2),v); else e.setAttribute(k,v);} for(const k of kids){ if(k==null) continue; e.append(k instanceof Node?k:document.createTextNode(String(k))); } return e; }
+function fmtTime(t){ return t ? new Date(t*1000).toLocaleString() : "never"; }
+async function post(url, body){ const r = await fetch(url,{method:"POST",headers:H,body:JSON.stringify(body||{})}); if(!r.ok && r.status!==204) alert(await r.text()); refresh(); }
+let scopesCache = [];
+let renderedPending = "";
+function scopePicker(selected, allowed){
+  const box = el("div",{class:"scopes"});
+  for(const s of scopesCache){ if(allowed && !allowed.includes(s.id)) continue;
+    const cb = el("input",{type:"checkbox",value:s.id}); cb.checked = selected.includes(s.id) && !s.high_risk;
+    box.append(el("label",{}, cb, el("span",{class:s.high_risk?"risk":""}, s.id + (s.high_risk?" ⚠":"")))); }
+  return box;
+}
+function picked(box){ return [...box.querySelectorAll("input:checked")].map(i=>i.value); }
+function render(s){
+  document.getElementById("name").textContent = s.device_name;
+  document.getElementById("sid").textContent = s.short_id;
+  document.getElementById("addr").textContent = (s.addresses.join(", ")||"no LAN address") + " : " + s.port;
+  const qr = document.getElementById("qr");
+  if (s.pairing_qr_svg) { const doc = new DOMParser().parseFromString(s.pairing_qr_svg,"image/svg+xml"); qr.replaceChildren(document.importNode(doc.documentElement,true)); } else qr.replaceChildren(el("div",{class:"empty"},"No LAN address"));
+  scopesCache = s.all_scopes;
+
+  const key = JSON.stringify(s.pending.map(p=>p.request_id));
+  if (key !== renderedPending) {
+    renderedPending = key;
+    const pend = document.getElementById("pending"); pend.replaceChildren();
+    if(!s.pending.length) pend.append(el("div",{class:"empty"},"No pairing requests."));
+    for(const p of s.pending){
+      const picker = scopePicker(p.requested_scopes, p.requested_scopes);
+      pend.append(el("div",{class:"row",style:"flex-wrap:wrap"},
+        el("div",{}, el("div",{}, el("b",{},p.device_name)," · ",p.platform," · ",p.peer_ip),
+          el("div",{class:"sub mono"}, p.device_id.slice(0,16)),
+          el("div",{class:"sas"}, p.sas), el("div",{class:"sub"},"Confirm the phone shows the same code."), picker),
+        el("div",{}, el("button",{class:"primary",onclick:()=>post(`/api/pairing/${p.request_id}/accept`,{scopes:picked(picker)})},"Accept"), " ",
+          el("button",{class:"danger",onclick:()=>post(`/api/pairing/${p.request_id}/reject`)},"Reject"))));
+    }
+  }
+
+  const ctl = document.getElementById("controllers"); ctl.replaceChildren();
+  if(!s.controllers.length) ctl.append(el("div",{class:"empty"},"No paired phones yet."));
+  for(const c of s.controllers){
+    ctl.append(el("div",{class:"row"},
+      el("div",{}, el("b",{},c.name)," ", el("span",{class:"pill "+(c.online?"on":"")}, c.online?"connected":"offline"),
+        el("div",{class:"sub"}, c.platform," · ",c.short_id," · last seen ",fmtTime(c.last_seen)),
+        el("div",{class:"sub mono"}, c.scopes.join("  "))),
+      el("button",{class:"danger",onclick:()=>{ if(confirm("Revoke "+c.name+"? It will be disconnected and must pair again.")) post(`/api/controllers/${c.device_id}/revoke`);}},"Revoke")));
+  }
+
+  const caps = document.getElementById("caps"); caps.replaceChildren();
+  caps.append(el("tr",{}, el("td",{},"OS"), el("td",{}, `${s.manifest.os_family} ${s.manifest.os_distribution||""} ${s.manifest.os_version} · ${s.manifest.architecture} · session ${s.manifest.session_type}`)));
+  for(const [k,v] of Object.entries(s.manifest.capabilities)){
+    caps.append(el("tr",{}, el("td",{class:"mono"},k), el("td",{}, el("span",{class:"pill "+(v.available?"on":"off")}, v.available?"available":"unavailable"), " ", el("span",{class:"sub"}, v.reason||""))));
+  }
+  const au = document.getElementById("audit"); au.replaceChildren();
+  for(const a of s.audit) au.append(el("tr",{}, el("td",{class:"sub"},fmtTime(a.ts)), el("td",{class:"mono"},a.short_id), el("td",{},a.action), el("td",{},a.outcome)));
+}
+async function refresh(){
+  try{ const r = await fetch("/api/state",{headers:H}); if(r.status===403){ document.getElementById("error").textContent="Unauthorized: open this page with `ccontrol-agent ui`."; return;} render(await r.json()); document.getElementById("error").textContent=""; }
+  catch(e){ document.getElementById("error").textContent="Agent not reachable: "+e; }
+}
+refresh(); setInterval(refresh, 1500);
+</script>
+</body>
+</html>

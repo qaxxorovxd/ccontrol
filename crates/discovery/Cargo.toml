@@ -1,0 +1,12 @@
+[package]
+name = "ccontrol-discovery"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "mDNS/DNS-SD advertisement of desktop agents"
+
+[dependencies]
+ccontrol-protocol.workspace = true
+mdns-sd = "0.13"
+thiserror.workspace = true
+tracing.workspace = true

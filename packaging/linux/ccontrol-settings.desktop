@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=ccontrol settings
+Comment=Pair phones and manage ccontrol access to this computer
+Exec=ccontrol-agent ui
+Icon=ccontrol
+Terminal=false
+Categories=Settings;Network;

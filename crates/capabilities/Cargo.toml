@@ -1,0 +1,11 @@
+[package]
+name = "ccontrol-capabilities"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Native OS / session / capability detection for the capability manifest"
+
+[dependencies]
+ccontrol-protocol.workspace = true
+ccontrol-system-control.workspace = true
+sysinfo = { version = "0.33", default-features = false, features = ["system"] }

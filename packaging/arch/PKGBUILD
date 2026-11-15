@@ -1,0 +1,36 @@
+# Maintainer: ccontrol maintainers
+pkgname=ccontrol
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="ccontrol desktop agent (control this PC from a paired Android phone)"
+arch=('x86_64')
+url="https://github.com/ccontrol/ccontrol"
+license=('MIT' 'Apache-2.0')
+depends=('glibc' 'gcc-libs')
+optdepends=('wireplumber: PipeWire volume control' 'libpulse: PulseAudio volume control (pactl)')
+makedepends=('cargo')
+source=("$pkgname-$pkgver.tar.gz")
+sha256sums=('SKIP')
+
+prepare() {
+  cd "$pkgname-$pkgver"
+  cargo fetch --locked --target "$(rustc -vV | sed -n 's/host: //p')"
+}
+
+build() {
+  cd "$pkgname-$pkgver"
+  cargo build --frozen --release -p ccontrol-agent
+}
+
+check() {
+  cd "$pkgname-$pkgver"
+  cargo test --frozen --workspace
+}
+
+package() {
+  cd "$pkgname-$pkgver"
+  install -Dm755 target/release/ccontrol-agent "$pkgdir/usr/bin/ccontrol-agent"
+  install -Dm644 packaging/linux/ccontrol-agent.service "$pkgdir/usr/lib/systemd/user/ccontrol-agent.service"
+  install -Dm644 packaging/linux/ccontrol-settings.desktop "$pkgdir/usr/share/applications/ccontrol-settings.desktop"
+  install -Dm644 packaging/linux/ccontrol.svg "$pkgdir/usr/share/icons/hicolor/scalable/apps/ccontrol.svg"
+}

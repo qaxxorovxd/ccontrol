@@ -1,0 +1,6 @@
+#!/bin/sh
+set -e
+# Per-user units cannot be stopped for every user from a root maintainer script;
+# users are told how in the uninstall documentation. User data in
+# ~/.local/share/ccontrol is left in place unless the user removes it.
+exit 0
