@@ -10,7 +10,7 @@ use crate::ControlError;
 use ccontrol_protocol::{ProcessInfo, TerminateMethod, TerminateOutcome};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
-use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
+use sysinfo::{Pid, ProcessRefreshKind, ProcessStatus, ProcessesToUpdate, System, UpdateKind};
 
 const GRACEFUL_WAIT: Duration = Duration::from_secs(5);
 const FORCE_WAIT: Duration = Duration::from_secs(3);
@@ -169,7 +169,11 @@ impl ProcessManager {
             true,
             ProcessRefreshKind::nothing(),
         );
-        g.0.process(pid).is_some()
+        // A terminated child stays a zombie until its parent reaps it; it has
+        // exited all the same.
+        g.0.process(pid)
+            .map(|p| !matches!(p.status(), ProcessStatus::Zombie | ProcessStatus::Dead))
+            .unwrap_or(false)
     }
 
     fn wait_exit(&self, pid: Pid, timeout: Duration) -> bool {
