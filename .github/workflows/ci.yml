@@ -48,6 +48,8 @@ jobs:
           distribution: temurin
           java-version: "21"
       - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
       - name: Install SDK platform 37 and build-tools 36 (accept licenses)
         run: |
           yes | sdkmanager --licenses > /dev/null || true
@@ -106,7 +108,7 @@ jobs:
           sudo apt-get remove -y ccontrol
       - name: AppImage
         run: |
-          sudo apt-get install -y libfuse2
+          sudo apt-get install -y libfuse2 desktop-file-utils
           curl -fsSL -o appimagetool https://github.com/AppImage/appimagetool/releases/download/1.9.0/appimagetool-x86_64.AppImage
           chmod +x appimagetool && sudo mv appimagetool /usr/local/bin/
           packaging/appimage/build-appimage.sh agent-bin/ccontrol-agent dist
