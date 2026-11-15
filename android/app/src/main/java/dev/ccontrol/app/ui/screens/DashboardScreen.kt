@@ -50,6 +50,7 @@ import dev.ccontrol.core.protocol.Action
 import dev.ccontrol.core.protocol.MediaKey
 import dev.ccontrol.core.protocol.Scopes
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material3.IconButton
 import androidx.compose.runtime.rememberCoroutineScope
 import kotlinx.coroutines.launch
@@ -84,10 +85,11 @@ fun LocalNetworkGate(onGranted: () -> Unit = {}) {
 }
 
 @Composable
-fun DashboardScreen(app: CControlApp, onOpen: (String) -> Unit, onAdd: () -> Unit) {
+fun DashboardScreen(app: CControlApp, onOpen: (String) -> Unit, onAdd: () -> Unit, onAudio: () -> Unit = {}) {
     val devices by app.repo.devices.collectAsStateWithLifecycle()
     val states by app.connections.states.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
+    val routes by app.routes.routes.collectAsStateWithLifecycle()
 
     Scaffold(
         containerColor = Palette.Background,
@@ -107,13 +109,20 @@ fun DashboardScreen(app: CControlApp, onOpen: (String) -> Unit, onAdd: () -> Uni
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             item {
-                Column(Modifier.padding(top = 8.dp, bottom = 8.dp)) {
-                    Text("ccontrol", style = MaterialTheme.typography.headlineSmall)
-                    val online = devices.count { states[it.deviceId] is LinkState.Online }
-                    Text(
-                        if (devices.isEmpty()) "No computers yet" else "$online of ${devices.size} online",
-                        style = MaterialTheme.typography.bodyMedium, color = Palette.Muted,
-                    )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f).padding(top = 8.dp, bottom = 8.dp)) {
+                        Text("ccontrol", style = MaterialTheme.typography.headlineSmall)
+                        val online = devices.count { states[it.deviceId] is LinkState.Online }
+                        Text(
+                            if (devices.isEmpty()) "No computers yet" else "$online of ${devices.size} online",
+                            style = MaterialTheme.typography.bodyMedium, color = Palette.Muted,
+                        )
+                    }
+                    val liveRoutes = routes.count { it.live }
+                    IconButton(onClick = onAudio) {
+                        Icon(Icons.Filled.GraphicEq, if (liveRoutes > 0) "Audio, $liveRoutes active routes" else "Audio routing",
+                            tint = if (liveRoutes > 0) Palette.Violet else Palette.Muted)
+                    }
                 }
             }
             item { LocalNetworkGate(onGranted = app.connections::reconnectNow) }

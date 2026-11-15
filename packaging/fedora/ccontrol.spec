@@ -1,11 +1,11 @@
 Name:           ccontrol
-Version:        0.2.0
+Version:        0.3.0
 Release:        1%{?dist}
 Summary:        ccontrol desktop agent (control this PC from a paired Android phone)
 License:        MIT OR Apache-2.0
 URL:            https://github.com/ccontrol/ccontrol
 Source0:        %{name}-%{version}.tar.gz
-BuildRequires:  cargo >= 1.80, rust >= 1.80, gcc, systemd-rpm-macros
+BuildRequires:  cargo >= 1.80, rust >= 1.80, gcc, gcc-c++, cmake, systemd-rpm-macros
 Recommends:     wireplumber
 %global debug_package %{nil}
 
@@ -35,6 +35,8 @@ cargo test --release --locked --workspace
 %{_datadir}/icons/hicolor/scalable/apps/ccontrol.svg
 
 %changelog
+* Sun Nov 15 2026 ccontrol maintainers - 0.3.0-1
+- Phase 3: audio routing (Opus/UDP), route journal, leases, crash recovery.
 * Sun Nov 15 2026 ccontrol maintainers - 0.2.0-1
 - Phase 2: processes, app windows, now playing, disks/battery, self-unpair.
 * Sun Nov 15 2026 ccontrol maintainers - 0.1.0-1

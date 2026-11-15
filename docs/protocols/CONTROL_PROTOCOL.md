@@ -36,6 +36,18 @@ actually presented (`identity_mismatch`), or whose version is outside `[1, 1]` (
 | `app.list` | – | `device.read` | `apps` (`window_id`, `pid`, `process_name`, `title`, `focused`, `minimized`) |
 | `app.close` | `window_id`, `pid` | `process.terminate` | `done` |
 | `pairing.unpair` | – | none (affects the caller only) | `done`, then `event: revoked` and close |
+| `audio.devices` | – | `audio.route` | `audio` (output endpoints, per-app sessions with PID/active/peak/mute, capture abilities with reasons) |
+| `audio.sink.prepare` | `route_id`, `key` (64 hex), `endpoint_id?`, `lease_secs` 5–600 | `audio.route` | `sink` (`udp_port`, `endpoint_name`, `state`) |
+| `audio.sink.stop` | `route_id` | `audio.route` | `sink` |
+| `route.audio.start` | `route_id`, `source` (`{kind:session,pid}` / `{kind:endpoint}` / `{kind:test_tone}`), `dest_host`, `dest_port`, `key`, `lease_secs`, `silence_local` | `audio.route` | `route` (runs VALIDATING → … → ACTIVE before answering, ≤ ~7 s) |
+| `route.audio.stop` | `route_id` | `audio.route` | `route` with `outcome` (idempotent) |
+| `route.lease.renew` | `route_id` | `audio.route`, owner only (`forbidden` otherwise) | `done` |
+| `route.list` | – | `audio.route` | `routes` (`routes[]` with live stats, `sinks[]`) |
+
+Media plane: UDP, see [AUDIO_ROUTING.md](../architecture/AUDIO_ROUTING.md). One live route per
+source; another phone gets `busy`. Any phone with `audio.route` may stop a route (safety), but
+only its owner may renew it. Agents from before v0.3 do not know these actions; phones must
+check that the manifest lists `audio.route` as available before using them.
 
 ### Process and window semantics (v0.2)
 

@@ -26,6 +26,10 @@ contents (future); device private keys; trust store; audio/screen streams (futur
 | Internet exposure | Default deny for non-private source IPs; no UPnP/port forwarding; Windows firewall rule scoped to the Private profile | `net_policy` tests |
 | Over-privileged agent | Per-user process; high-risk scopes opt-in per controller; no shell endpoint | design |
 | Paired phone kills critical/other users' processes | `process.terminate` scope (high-risk, never pre-ticked); agent refuses itself, PIDs ≤ 4, a critical list and every process not owned by the agent's user; never elevates; name must match PID | `processes::tests`, `e2e::process_list_and_terminate_with_safeguards`, manual lsass check |
+| Injected / spoofed / replayed audio packets on the LAN | Per-route random 32-byte key delivered only over the two mTLS control channels; ChaCha20-Poly1305 (`ring`) with header as AAD; 64-packet replay window; unauthenticated packets dropped and counted | `packet::tests`, `pipeline::tests::receiver_ignores_wrong_key` |
+| Phone disappears leaving an app muted | Agent-owned leases (default 30 s) + write-ahead journal; restore with compare-and-swap; reconcile on restart | `docs/architecture/RECOVERY.md` tests |
+| Another phone hijacks a route | One live route per source (`busy`); only the owner renews; any authorized phone may *stop* (safety) | `e2e::second_phone_cannot_hijack_or_renew_a_route` |
+| Covert listening | Capture runs only for an explicit route started by a paired phone holding `audio.route`; the desktop settings page lists every live route with a local Stop & restore; Android shows an ongoing notification | manual |
 | Window-handle reuse closes the wrong window | `app.close` re-checks that the HWND still exists, belongs to the given PID and is an app window | `apps::tests::rejects_stale_handles` |
 | Key theft from disk | DPAPI on Windows; Keystore on Android; Linux 0600 (TPM/Secret Service planned) | `protect` tests |
 | Log leakage | Logs carry short fingerprints, action names and outcomes only; no tokens, keys or payloads | review |

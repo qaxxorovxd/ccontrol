@@ -77,6 +77,21 @@ impl Store {
                 device_id TEXT NOT NULL,
                 action TEXT NOT NULL,
                 outcome TEXT NOT NULL
+             );
+             CREATE TABLE IF NOT EXISTS route_journal (
+                route_id TEXT NOT NULL,
+                role TEXT NOT NULL,
+                owner TEXT NOT NULL,
+                state TEXT NOT NULL,
+                source TEXT NOT NULL,
+                dest TEXT NOT NULL,
+                original TEXT,
+                applied TEXT,
+                lease_expiry INTEGER NOT NULL,
+                outcome TEXT,
+                note TEXT,
+                updated_at INTEGER NOT NULL,
+                PRIMARY KEY (route_id, role)
              );",
         )?;
         conn.execute(
@@ -193,6 +208,62 @@ impl Store {
         Ok(())
     }
 
+    /// Write-ahead: persist a route's state *before* acting on it.
+    pub fn journal_route(&self, r: &RouteRecord) -> Result<(), StoreError> {
+        self.conn().execute(
+            "INSERT INTO route_journal(route_id, role, owner, state, source, dest, original, applied,
+                                       lease_expiry, outcome, note, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+             ON CONFLICT(route_id, role) DO UPDATE SET
+               owner = excluded.owner, state = excluded.state, source = excluded.source,
+               dest = excluded.dest, original = excluded.original, applied = excluded.applied,
+               lease_expiry = excluded.lease_expiry, outcome = excluded.outcome,
+               note = excluded.note, updated_at = excluded.updated_at",
+            params![
+                r.route_id, r.role, r.owner, r.state, r.source, r.dest, r.original, r.applied,
+                r.lease_expiry, r.outcome, r.note, now()
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn routes(&self, only_unfinished: bool) -> Result<Vec<RouteRecord>, StoreError> {
+        let c = self.conn();
+        let sql = if only_unfinished {
+            "SELECT route_id, role, owner, state, source, dest, original, applied, lease_expiry, outcome, note
+             FROM route_journal WHERE state NOT IN ('idle', 'recovery_required', 'stopped', 'failed')
+             ORDER BY updated_at"
+        } else {
+            "SELECT route_id, role, owner, state, source, dest, original, applied, lease_expiry, outcome, note
+             FROM route_journal ORDER BY updated_at DESC LIMIT 200"
+        };
+        let mut st = c.prepare(sql)?;
+        let rows = st.query_map([], |r| {
+            Ok(RouteRecord {
+                route_id: r.get(0)?,
+                role: r.get(1)?,
+                owner: r.get(2)?,
+                state: r.get(3)?,
+                source: r.get(4)?,
+                dest: r.get(5)?,
+                original: r.get(6)?,
+                applied: r.get(7)?,
+                lease_expiry: r.get(8)?,
+                outcome: r.get(9)?,
+                note: r.get(10)?,
+            })
+        })?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    /// Drop finished journal rows older than `max_age_secs`.
+    pub fn prune_routes(&self, max_age_secs: i64) -> Result<usize, StoreError> {
+        Ok(self.conn().execute(
+            "DELETE FROM route_journal WHERE state IN ('idle', 'stopped', 'failed') AND updated_at < ?1",
+            params![now() - max_age_secs],
+        )?)
+    }
+
     pub fn recent_audit(&self, limit: u32) -> Result<Vec<AuditEntry>, StoreError> {
         let c = self.conn();
         let mut st = c.prepare(
@@ -234,6 +305,27 @@ fn to_controller(
     })
 }
 
+/// One row of the write-ahead route journal.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct RouteRecord {
+    pub route_id: String,
+    /// "source" or "sink".
+    pub role: String,
+    pub owner: String,
+    /// snake_case `RouteState` / `SinkState`.
+    pub state: String,
+    /// JSON `RouteSource`.
+    pub source: String,
+    pub dest: String,
+    /// JSON `[(session_id, muted)]` captured before any local change.
+    pub original: Option<String>,
+    /// JSON `[session_id]` this agent actually changed.
+    pub applied: Option<String>,
+    pub lease_expiry: i64,
+    pub outcome: Option<String>,
+    pub note: Option<String>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -262,6 +354,33 @@ mod tests {
             s.get_controller("abc").unwrap().unwrap().scopes,
             sample("abc").scopes
         );
+    }
+
+    #[test]
+    fn route_journal_upserts_and_filters_unfinished() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("agent.db");
+        {
+            let s = Store::open(&p).unwrap();
+            let mut r = RouteRecord {
+                route_id: "r1".into(),
+                role: "source".into(),
+                state: "active".into(),
+                original: Some("[[\"s\",false]]".into()),
+                ..Default::default()
+            };
+            s.journal_route(&r).unwrap();
+            r.route_id = "r2".into();
+            r.state = "idle".into();
+            s.journal_route(&r).unwrap();
+        }
+        // Survives a reopen (crash): only the unfinished route is returned.
+        let s = Store::open(&p).unwrap();
+        let open = s.routes(true).unwrap();
+        assert_eq!(open.len(), 1);
+        assert_eq!(open[0].route_id, "r1");
+        assert_eq!(open[0].original.as_deref(), Some("[[\"s\",false]]"));
+        assert_eq!(s.routes(false).unwrap().len(), 2);
     }
 
     #[test]

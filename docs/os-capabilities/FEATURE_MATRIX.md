@@ -13,9 +13,9 @@ The capabilities below are deliberately kept separate. They are **not** intercha
 
 | Capability | Windows 10 (≤19045) | Windows 10 21H2 Server/11 (≥20348) | Linux PipeWire | Linux PulseAudio-only | Android (normal app) |
 |---|---|---|---|---|---|
-| **Capture one app's audio** | ⛔ no documented per-process loopback; only whole-endpoint loopback | 📐 `ActivateAudioInterfaceAsync` + `AUDIOCLIENT_ACTIVATION_TYPE_PROCESS_LOOPBACK` (include/exclude process tree) | 📐 `pw_stream` capture targeting the app's output node (`target.object`) | 📐 monitor + `move-sink-input` to a null sink (coarser) | ⛔ for arbitrary apps. 📐 `AudioPlaybackCapture` (API 29+) only for apps that allow capture (usage MEDIA/GAME/UNKNOWN, `allowAudioPlaybackCapture`), after MediaProjection consent |
+| **Capture one app's audio** | ⛔ no documented per-process loopback; whole-endpoint loopback ✅ | 📐 `ActivateAudioInterfaceAsync` + `AUDIOCLIENT_ACTIVATION_TYPE_PROCESS_LOOPBACK` (include/exclude process tree) | 📐 `pw_stream` capture targeting the app's output node (`target.object`) | 📐 monitor + `move-sink-input` to a null sink (coarser) | ⛔ for arbitrary apps. 📐 `AudioPlaybackCapture` (API 29+) only for apps that allow capture (usage MEDIA/GAME/UNKNOWN, `allowAudioPlaybackCapture`), after MediaProjection consent |
 | **Silence/reroute one app locally** | ⛔ no documented per-app endpoint routing API (Settings "App volume and device preferences" uses undocumented `IAudioPolicyConfigFactory`) — only per-session volume/mute via `ISimpleAudioVolume` | same; mute the session via `ISimpleAudioVolume` while capturing with process loopback | 📐 re-link the stream's node to a null sink via the session manager (WirePlumber metadata `target.object`) | 📐 `move-sink-input` | ⛔ |
-| **Play a remote stream** | 📐 WASAPI shared-mode render | 📐 same | 📐 `pw_stream` playback | 📐 libpulse simple API | 📐 `AudioTrack` (foreground service) |
+| **Play a remote stream** | ✅ WASAPI shared-mode render | 🟡 same | 🟡 `pw-play` | 🟡 `pw-play` via pipewire-pulse | 📐 `AudioTrack` (foreground service) |
 | **Master volume / mute** | ✅ `IAudioEndpointVolume` | 🟡 same code | 🟡 `wpctl` → `pactl` fallback | 🟡 `pactl` | n/a |
 | **Media keys** | 🟡 `SendInput(VK_MEDIA_*)` (interactive session only) | 🟡 | 🟡 MPRIS over D-Bus (`zbus`) | 🟡 | n/a |
 | **Observe notifications** | 📐 `UserNotificationListener` (needs package identity + user consent; *other apps'* toasts only via this API) | 📐 same | 📐 not universal: only via the notification server (e.g. GNOME/KDE extension or `org.freedesktop.Notifications` monitor with `BecomeMonitor`, which may be denied) | same | 📐 `NotificationListenerService` (user-granted) |
@@ -52,6 +52,12 @@ docs; XDG Desktop Portal RemoteDesktop/ScreenCast specs; Android `AudioPlaybackC
 | Process list, graceful quit, confirmed force quit | ✅ (Notepad closed gracefully; lsass refused) | 🟡 | 🟡 UI; ✅ list + denial via interop |
 | App windows list + close | ✅ (real Chrome/Claude/Notepad windows) | reported unavailable with reason | 🟡 UI |
 | Controller self-unpair ("Forget" removes access on the computer) | ✅ | 🟡 | ✅ interop |
+| Audio inventory (endpoints, per-app sessions with PID/peak/mute) | ✅ real Realtek + USB endpoints, real sessions | 🟡 `pw-dump` (parser unit-tested) | 🟡 Audio screen |
+| Whole-output capture → remote playback | ✅ two agent processes, real loopback → USB speakers, 0 loss | 🟡 `pw-record` monitor / `pw-play` | 🟡 UI; ✅ Kotlin interop drives a real route |
+| Per-app capture | ⛔ on build 19045 (reported); 🟡 process loopback compiled for ≥ 20348 | 🟡 `pw-record --target <node>` | — |
+| Reversible local silencing (true handoff) | ✅ mute adapter on hardware; 🟡 end-to-end needs ≥ 20348 | ⏳ not implemented (local playback kept, reason shown) | 🟡 UI checkbox |
+| Route journal, leases, crash reconcile | ✅ incl. real `taskkill /F` mid-route | 🟡 same code | ✅ foreground service renews leases (unseen on device) |
+| Phone as audio source/destination | — | — | ⏳ not implemented |
 | Settings UI (loopback, token-protected) | ✅ browser page | 🟡 | n/a |
 | Autostart (opt-in) | 🟡 HKCU Run | 🟡 systemd user unit | n/a |
 | Installer | ✅ Inno Setup .exe built + silent install/uninstall tested | 🟡 .deb/.AppImage/.rpm/PKGBUILD recipes (CI) | ✅ APK built (no device test) |

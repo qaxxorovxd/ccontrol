@@ -123,7 +123,11 @@ mod tests {
     #[test]
     fn status_does_not_error() {
         use crate::MediaControl;
-        let s = super::WindowsMedia.status();
-        assert!(s.is_ok(), "{s:?}");
+        // CI runners (Windows Server) may have no media session manager: that
+        // must surface as "unsupported", never as a crash or platform error.
+        match super::WindowsMedia.status() {
+            Ok(_) | Err(crate::ControlError::Unsupported(_)) => {}
+            Err(e) => panic!("{e:?}"),
+        }
     }
 }

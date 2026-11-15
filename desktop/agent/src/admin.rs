@@ -26,6 +26,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/pairing/{id}/reject", post(api_reject))
         .route("/api/controllers/{id}/revoke", post(api_revoke))
         .route("/api/controllers/{id}/scopes", post(api_scopes))
+        .route("/api/routes/{id}/stop", post(api_route_stop))
         .with_state(state)
 }
 
@@ -81,6 +82,8 @@ struct StateView {
     sessions: Vec<crate::sessions::SessionInfo>,
     audit: Vec<AuditView>,
     all_scopes: Vec<ScopeView>,
+    routes: Vec<ccontrol_protocol::RouteInfo>,
+    sinks: Vec<ccontrol_protocol::SinkInfo>,
 }
 
 #[derive(Serialize)]
@@ -189,6 +192,8 @@ async fn api_state(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Re
                 high_risk: s.is_high_risk(),
             })
             .collect(),
+        routes: state.audio.list().0,
+        sinks: state.audio.list().1,
     })
     .into_response()
 }
@@ -248,6 +253,30 @@ async fn api_revoke(
         Ok(false) => StatusCode::NOT_FOUND.into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     }
+}
+
+/// Local, manual stop/restore of a route or sink (owner override on this computer).
+async fn api_route_stop(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Response {
+    if !authorized(&state, &headers) {
+        return deny();
+    }
+    let r = state
+        .audio
+        .stop_route(&state, &id, "the owner on this computer")
+        .await;
+    let s = state
+        .audio
+        .stop_sink(&state, &id, Some("stopped on this computer".into()))
+        .await;
+    if r.is_err() && s.is_err() {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    let _ = state.store.audit("local", "route.stop", &id);
+    StatusCode::NO_CONTENT.into_response()
 }
 
 async fn api_scopes(

@@ -237,7 +237,7 @@ async fn run_session<R, W>(
                             let name = action.name();
                             let r = dispatch::execute(&state, &fp, &scopes, action).await;
                             let outcome = match &r { Ok(_) => "ok".to_owned(), Err(e) => format!("{:?}", e.code) };
-                            if !matches!(name, "telemetry.get" | "volume.get" | "device.info" | "media.status" | "process.list" | "app.list") {
+                            if !matches!(name, "telemetry.get" | "volume.get" | "device.info" | "media.status" | "process.list" | "app.list" | "route.list" | "route.lease.renew" | "audio.devices") {
                                 let _ = state.store.audit(&fp, name, &outcome);
                             }
                             let msg = match r {

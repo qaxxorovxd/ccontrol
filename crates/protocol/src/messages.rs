@@ -1,3 +1,4 @@
+use crate::audio::{AudioInventory, RouteInfo, RouteSource, SinkInfo};
 use crate::{CapabilityManifest, Scope};
 use serde::{Deserialize, Serialize};
 
@@ -127,6 +128,42 @@ pub enum Action {
     /// The controller removes its own pairing on this computer.
     #[serde(rename = "pairing.unpair")]
     Unpair,
+    /// Output devices and per-app audio sessions with capture abilities.
+    #[serde(rename = "audio.devices")]
+    AudioDevices,
+    /// Destination side: open an authenticated UDP sink for `route_id`.
+    #[serde(rename = "audio.sink.prepare")]
+    SinkPrepare {
+        route_id: String,
+        /// hex(32 random bytes) chosen by the controller; shared with the source.
+        key: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        endpoint_id: Option<String>,
+        lease_secs: u32,
+    },
+    #[serde(rename = "audio.sink.stop")]
+    SinkStop { route_id: String },
+    /// Source side: start streaming to a prepared sink and run the route
+    /// state machine up to ACTIVE.
+    #[serde(rename = "route.audio.start")]
+    RouteStart {
+        route_id: String,
+        source: RouteSource,
+        dest_host: String,
+        dest_port: u16,
+        key: String,
+        lease_secs: u32,
+        /// Silence the app locally once remote playback is verified (true handoff).
+        silence_local: bool,
+    },
+    #[serde(rename = "route.audio.stop")]
+    RouteStop { route_id: String },
+    /// Renew the lease of a route or sink owned by this agent.
+    #[serde(rename = "route.lease.renew")]
+    LeaseRenew { route_id: String },
+    /// All routes and sinks on this agent (with live stats).
+    #[serde(rename = "route.list")]
+    RouteList,
 }
 
 impl Action {
@@ -144,6 +181,13 @@ impl Action {
             Action::AppList => "app.list",
             Action::AppClose { .. } => "app.close",
             Action::Unpair => "pairing.unpair",
+            Action::AudioDevices => "audio.devices",
+            Action::SinkPrepare { .. } => "audio.sink.prepare",
+            Action::SinkStop { .. } => "audio.sink.stop",
+            Action::RouteStart { .. } => "route.audio.start",
+            Action::RouteStop { .. } => "route.audio.stop",
+            Action::LeaseRenew { .. } => "route.lease.renew",
+            Action::RouteList => "route.list",
         }
     }
 
@@ -159,6 +203,13 @@ impl Action {
             | Action::MediaKey { .. }
             | Action::MediaStatus => Scope::MediaControl,
             Action::ProcessTerminate { .. } | Action::AppClose { .. } => Scope::ProcessTerminate,
+            Action::AudioDevices
+            | Action::SinkPrepare { .. }
+            | Action::SinkStop { .. }
+            | Action::RouteStart { .. }
+            | Action::RouteStop { .. }
+            | Action::LeaseRenew { .. }
+            | Action::RouteList => Scope::AudioRoute,
             Action::Unpair => return None,
         })
     }
@@ -175,6 +226,37 @@ impl Action {
                 Err("pid and process name are required".into())
             }
             Action::AppClose { window_id: 0, .. } => Err("window_id is required".into()),
+            Action::SinkPrepare {
+                route_id,
+                key,
+                lease_secs,
+                ..
+            }
+            | Action::RouteStart {
+                route_id,
+                key,
+                lease_secs,
+                ..
+            } if !crate::audio::valid_route_id(route_id)
+                || !crate::audio::valid_stream_key(key)
+                || !(5..=600).contains(lease_secs) =>
+            {
+                Err("invalid route_id, key or lease_secs (5..=600)".into())
+            }
+            Action::RouteStart {
+                dest_host,
+                dest_port,
+                ..
+            } if dest_host.is_empty() || dest_host.len() > 253 || *dest_port == 0 => {
+                Err("invalid destination".into())
+            }
+            Action::SinkStop { route_id }
+            | Action::RouteStop { route_id }
+            | Action::LeaseRenew { route_id }
+                if !crate::audio::valid_route_id(route_id) =>
+            {
+                Err("invalid route_id".into())
+            }
             _ => Ok(()),
         }
     }
@@ -193,13 +275,26 @@ pub enum MediaKey {
 #[serde(tag = "kind", rename_all = "snake_case")]
 #[allow(clippy::large_enum_variant)] // transient wire value; boxing buys nothing here
 pub enum ActionResult {
-    Manifest { manifest: CapabilityManifest },
+    Manifest {
+        manifest: CapabilityManifest,
+    },
     Telemetry(Telemetry),
     Volume(VolumeState),
     MediaStatus(MediaStatus),
-    Processes { processes: Vec<ProcessInfo> },
+    Processes {
+        processes: Vec<ProcessInfo>,
+    },
     Terminated(TerminateOutcome),
-    Apps { windows: Vec<AppWindow> },
+    Apps {
+        windows: Vec<AppWindow>,
+    },
+    Audio(AudioInventory),
+    Sink(SinkInfo),
+    Route(RouteInfo),
+    Routes {
+        routes: Vec<RouteInfo>,
+        sinks: Vec<SinkInfo>,
+    },
     Done,
 }
 

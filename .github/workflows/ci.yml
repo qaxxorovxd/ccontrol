@@ -75,8 +75,13 @@ jobs:
           if [ -f app/build/outputs/apk/release/app-release.apk ]; then
             cp app/build/outputs/apk/release/app-release.apk ../dist/ccontrol-android-arm64.apk
           else
-            echo "::warning::No signing secrets: publishing the debug-signed APK"
-            cp app/build/outputs/apk/debug/app-debug.apk ../dist/ccontrol-android-arm64.apk
+            # No release keystore configured: sign the minified release build with the
+            # runner's auto-generated debug key so it is installable (side-load only).
+            echo "::warning::No signing secrets: release APK signed with a debug key"
+            BT="$ANDROID_HOME/build-tools/36.0.0"
+            "$BT/zipalign" -f -p 4 app/build/outputs/apk/release/app-release-unsigned.apk "$RUNNER_TEMP/aligned.apk"
+            "$BT/apksigner" sign --ks "$HOME/.android/debug.keystore" --ks-pass pass:android --key-pass pass:android               --ks-key-alias androiddebugkey --out ../dist/ccontrol-android-arm64.apk "$RUNNER_TEMP/aligned.apk"
+            "$BT/apksigner" verify ../dist/ccontrol-android-arm64.apk
           fi
       - uses: actions/upload-artifact@v4
         with: { name: apk, path: dist/*.apk, if-no-files-found: error }
@@ -110,7 +115,7 @@ jobs:
     runs-on: ubuntu-24.04
     container: fedora:42
     steps:
-      - run: dnf install -y git rpm-build cargo rust gcc systemd-rpm-macros tar
+      - run: dnf install -y git rpm-build cargo rust gcc gcc-c++ cmake systemd-rpm-macros tar
       - uses: actions/checkout@v4
       - run: |
           V=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
@@ -143,16 +148,46 @@ jobs:
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [android, linux-packages, rpm, windows-installer]
+    needs: [android, linux-packages, windows-installer]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
-        with: { path: dist, merge-multiple: true }
-      - run: scripts/checksums.sh dist
+        with: { name: apk, path: dist }
+      - uses: actions/download-artifact@v4
+        with: { name: linux-packages, path: dist }
+      - uses: actions/download-artifact@v4
+        with: { name: windows-installer, path: dist }
+      - name: Checksums
+        run: |
+          ls -la dist
+          scripts/checksums.sh dist
+      - name: Release notes
+        run: |
+          {
+            echo "## Downloads"
+            echo
+            echo "| File | For |"
+            echo "|---|---|"
+            echo "| \`ccontrol-Setup-x64.exe\` | Windows 10 / 11 installer (per-user, no admin needed) |"
+            echo "| \`ccontrol-amd64.deb\` | Debian / Ubuntu / Mint: \`sudo apt install ./ccontrol-amd64.deb\` |"
+            echo "| \`ccontrol-x86_64.AppImage\` | Other x86_64 Linux: \`chmod +x\` and run |"
+            echo "| \`ccontrol-android-arm64.apk\` | Android 10+ (all CPU types) |"
+            echo
+            echo "Packages are not code-signed yet; the APK is signed with a CI debug key (side-load only)."
+            echo "See [PROGRESS.md](https://github.com/${{ github.repository }}/blob/${{ github.ref_name }}/PROGRESS.md) for what is verified on which platform."
+            echo
+            echo "### SHA-256"
+            echo '```'
+            cat dist/SHA256SUMS
+            echo '```'
+          } > notes.md
       - uses: softprops/action-gh-release@v2
         with:
-          files: dist/*
+          files: |
+            dist/ccontrol-*
+            dist/SHA256SUMS
+          body_path: notes.md
           generate_release_notes: true

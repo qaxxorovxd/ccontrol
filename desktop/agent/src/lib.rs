@@ -1,6 +1,7 @@
 //! ccontrol desktop agent library (used by the binary and integration tests).
 
 pub mod admin;
+pub mod audio;
 pub mod autostart;
 pub mod config;
 pub mod dispatch;

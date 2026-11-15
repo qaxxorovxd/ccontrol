@@ -4,7 +4,7 @@
 
 | Part | Needs | Verified here |
 |---|---|---|
-| Rust workspace | Rust stable ≥ 1.80; Windows: MSVC Build Tools (C++ workload, for `ring`/SQLite); Linux: `gcc`, `pkg-config` | Rust 1.9x stable + VS 2022 Build Tools 14.44 on Windows 10 |
+| Rust workspace | Rust stable ≥ 1.80; Windows: MSVC Build Tools (C++ workload, for `ring`/SQLite/libopus) **and CMake** (bundled with VS Build Tools: put `…\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin` on `PATH` or set `CMAKE`); Linux: `gcc`, `cmake`, `pkg-config` | Rust 1.9x stable + VS 2022 Build Tools 14.44 on Windows 10 |
 | Android | JDK 17+ (Android Studio JBR works), Android SDK platform 37 + build-tools 36, Gradle 9.6 (wrapper) | JBR/OpenJDK 25, AGP 9.5.1, Kotlin 2.3.21 |
 | Windows installer | Inno Setup 6 (`winget install JRSoftware.InnoSetup`) | yes |
 | Linux packages | `dpkg-deb`, `appimagetool`, `rpmbuild`, `makepkg` | CI only |
@@ -30,6 +30,18 @@ Pair and call actions with the developer controller:
 ```bash
 target/release/ccontrol-ctl --state ./.ctl pair 127.0.0.1:47800
 target/release/ccontrol-ctl --state ./.ctl call 127.0.0.1:47800 volume.get
+```
+
+Real-hardware audio tests (play a quiet tone):
+
+```bash
+cargo test -p ccontrol-audio-engine --test windows_hw -- --ignored --test-threads=1
+```
+
+Route between two agents (e.g. two agent processes with different `--data-dir`/ports, or two PCs):
+
+```bash
+target/release/ccontrol-ctl --state ./.ctl route SRC:47800 DST:47800 tone 5
 ```
 
 ## Android

@@ -64,6 +64,8 @@ class ConnectionManager(
     private val wake = MutableSharedFlow<Unit>(extraBufferCapacity = 1, onBufferOverflow = BufferOverflow.DROP_OLDEST)
     private var backgroundJobs = emptyList<Job>()
     @Volatile private var active = false
+    @Volatile private var uiForeground = false
+    @Volatile private var keepAlive = false
 
     private val netCallback = object : ConnectivityManager.NetworkCallback() {
         override fun onAvailable(network: Network) { wake.tryEmit(Unit) }
@@ -73,9 +75,26 @@ class ConnectionManager(
     /** Called from ProcessLifecycleOwner: connect only while the UI is in use. */
     @Synchronized
     fun setForeground(foreground: Boolean) {
-        if (foreground == active) return
-        active = foreground
-        if (foreground) start() else stop()
+        uiForeground = foreground
+        apply()
+    }
+
+    /**
+     * Keep connections while the UI is in the background (an audio route is
+     * active and its leases must be renewed; a foreground service is shown).
+     */
+    @Synchronized
+    fun setKeepAlive(keep: Boolean) {
+        keepAlive = keep
+        apply()
+    }
+
+    @Synchronized
+    private fun apply() {
+        val want = uiForeground || keepAlive
+        if (want == active) return
+        active = want
+        if (want) start() else stop()
     }
 
     private fun start() {
@@ -214,9 +233,9 @@ class ConnectionManager(
         }
     }
 
-    suspend fun call(id: String, action: Action): ActionResult {
+    suspend fun call(id: String, action: Action, timeoutMs: Long = 12_000): ActionResult {
         val s = sessions[id] ?: throw IllegalStateException("Computer is offline")
-        return s.request(action)
+        return s.request(action, timeoutMs)
     }
 
     fun isOnline(id: String) = sessions[id]?.isOpen == true

@@ -78,6 +78,19 @@ class ProtocolTest {
         assertEquals("C:\\", (tel as ActionResult.TelemetryResult).telemetry.disks.single().mount)
     }
 
+    @Test fun audioRouteShapes() {
+        assertEquals(
+            """{"type":"request","id":7,"action":"route.audio.start","route_id":"r1","source":{"kind":"session","pid":42,"app_name":"Spotify"},"dest_host":"10.0.0.2","dest_port":5000,"key":"k","lease_secs":30,"silence_local":true}""",
+            Wire.encode(Message.Request(7, Action.RouteStart("r1", dev.ccontrol.core.protocol.RouteSource.Session(42, "Spotify"), "10.0.0.2", 5000, "k", 30, true))),
+        )
+        assertEquals(
+            """{"type":"request","id":8,"action":"audio.sink.prepare","route_id":"r1","key":"k","lease_secs":30}""",
+            Wire.encode(Message.Request(8, Action.SinkPrepare("r1", "k", null, 30))),
+        )
+        val r = Wire.decodeResult(Wire.json.parseToJsonElement("""{"kind":"route","route_id":"r1","state":"active","source":{"kind":"test_tone"},"capture":"test_tone","dest":"h:1","owner":"o","silence_local_requested":false,"local_silenced":false,"lease_remaining_ms":1000,"stats":{"packets":1,"lost":0,"late":0,"duplicates":0,"concealed_frames":0,"frames_played":1,"underruns":0,"jitter_ms":0.0,"buffer_ms":40.0,"bitrate_kbps":160.0,"peak":0.1}}""") as kotlinx.serialization.json.JsonObject)
+        assertEquals("active", (r as ActionResult.Route).route.state)
+    }
+
     @Test(expected = IllegalArgumentException::class) fun rejectsOutOfRangeVolume() {
         Action.VolumeSet(1.5f)
     }

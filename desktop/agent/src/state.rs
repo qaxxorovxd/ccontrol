@@ -1,6 +1,8 @@
+use crate::audio::AudioManager;
 use crate::config::AgentConfig;
 use crate::pairing::PairingManager;
 use crate::sessions::SessionRegistry;
+use ccontrol_audio_engine::device::AudioSystem;
 use ccontrol_capabilities::{build_manifest, OsInfo, Probes};
 use ccontrol_persistence::Store;
 use ccontrol_protocol::CapabilityManifest;
@@ -18,6 +20,7 @@ pub struct Adapters {
     pub telemetry: TelemetrySampler,
     pub processes: ProcessManager,
     pub windows: Box<dyn WindowControl>,
+    pub audio: Arc<dyn AudioSystem>,
 }
 
 impl Adapters {
@@ -28,6 +31,7 @@ impl Adapters {
             telemetry: TelemetrySampler::new(),
             processes: ProcessManager::new(),
             windows: ccontrol_system_control::windows_adapter(),
+            audio: ccontrol_audio_engine::device::native(),
         }
     }
 }
@@ -43,6 +47,7 @@ pub struct AppState {
     pub pairing: PairingManager,
     pub sessions: SessionRegistry,
     pub adapters: Arc<Adapters>,
+    pub audio: AudioManager,
     pub admin_token: String,
 }
 
@@ -76,7 +81,21 @@ impl AppState {
                     .map(|_| ())
                     .map_err(|e| e.to_string()),
             ),
+            audio: Some(
+                adapters
+                    .audio
+                    .inventory()
+                    .map(|i| ccontrol_capabilities::AudioProbe {
+                        can_play: i.can_play,
+                        endpoint_capture: i.endpoint_capture,
+                        process_capture: i.process_capture,
+                        process_capture_reason: i.process_capture_reason,
+                    })
+                    .map_err(|e| e.to_string()),
+            ),
         };
+        // Reconciles the route journal (crash recovery) before anything else.
+        let audio = AudioManager::new(adapters.audio.clone(), &store);
         let manifest = build_manifest(
             &identity.fingerprint,
             &device_name,
@@ -95,6 +114,7 @@ impl AppState {
             pairing: PairingManager::default(),
             sessions: SessionRegistry::default(),
             adapters: Arc::new(adapters),
+            audio,
             admin_token,
         })
     }

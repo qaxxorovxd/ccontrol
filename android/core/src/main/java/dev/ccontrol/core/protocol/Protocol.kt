@@ -191,6 +191,21 @@ sealed class Action(val name: String) {
     data object AppList : Action("app.list")
     data class AppClose(val windowId: Long, val pid: Long) : Action("app.close")
     data object Unpair : Action("pairing.unpair")
+    data object AudioDevices : Action("audio.devices")
+    data class SinkPrepare(val routeId: String, val key: String, val endpointId: String?, val leaseSecs: Int) : Action("audio.sink.prepare")
+    data class SinkStop(val routeId: String) : Action("audio.sink.stop")
+    data class RouteStart(
+        val routeId: String,
+        val source: RouteSource,
+        val destHost: String,
+        val destPort: Int,
+        val key: String,
+        val leaseSecs: Int,
+        val silenceLocal: Boolean,
+    ) : Action("route.audio.start")
+    data class RouteStop(val routeId: String) : Action("route.audio.stop")
+    data class LeaseRenew(val routeId: String) : Action("route.lease.renew")
+    data object RouteList : Action("route.list")
 }
 
 sealed interface ActionResult {
@@ -201,6 +216,10 @@ sealed interface ActionResult {
     data class Processes(val processes: List<ProcessInfo>) : ActionResult
     data class Terminated(val outcome: TerminateOutcome) : ActionResult
     data class Apps(val windows: List<AppWindow>) : ActionResult
+    data class Audio(val inventory: AudioInventory) : ActionResult
+    data class Sink(val sink: SinkInfo) : ActionResult
+    data class Route(val route: RouteInfo) : ActionResult
+    data class Routes(val routes: List<RouteInfo>, val sinks: List<SinkInfo>) : ActionResult
     data object Done : ActionResult
     data class Unknown(val kind: String) : ActionResult
 }
@@ -258,6 +277,19 @@ object Wire {
                 is Action.Media -> put("key", a.key.wire)
                 is Action.ProcessTerminate -> { put("pid", a.pid); put("name", a.processName); put("force", a.force) }
                 is Action.AppClose -> { put("window_id", a.windowId); put("pid", a.pid) }
+                is Action.SinkPrepare -> {
+                    put("route_id", a.routeId); put("key", a.key)
+                    a.endpointId?.let { put("endpoint_id", it) }
+                    put("lease_secs", a.leaseSecs)
+                }
+                is Action.SinkStop -> put("route_id", a.routeId)
+                is Action.RouteStart -> {
+                    put("route_id", a.routeId); put("source", a.source.toJson())
+                    put("dest_host", a.destHost); put("dest_port", a.destPort)
+                    put("key", a.key); put("lease_secs", a.leaseSecs); put("silence_local", a.silenceLocal)
+                }
+                is Action.RouteStop -> put("route_id", a.routeId)
+                is Action.LeaseRenew -> put("route_id", a.routeId)
                 else -> {}
             }
         }
@@ -306,6 +338,13 @@ object Wire {
         "processes" -> ActionResult.Processes(json.decodeFromJsonElement(o["processes"] ?: throw ProtocolException("processes")))
         "terminated" -> ActionResult.Terminated(json.decodeFromJsonElement(o))
         "apps" -> ActionResult.Apps(json.decodeFromJsonElement(o["windows"] ?: throw ProtocolException("windows")))
+        "audio" -> ActionResult.Audio(json.decodeFromJsonElement(o))
+        "sink" -> ActionResult.Sink(json.decodeFromJsonElement(o))
+        "route" -> ActionResult.Route(json.decodeFromJsonElement(o))
+        "routes" -> ActionResult.Routes(
+            json.decodeFromJsonElement(o["routes"] ?: throw ProtocolException("routes")),
+            json.decodeFromJsonElement(o["sinks"] ?: throw ProtocolException("sinks")),
+        )
         "done" -> ActionResult.Done
         else -> ActionResult.Unknown(kind ?: "?")
     }

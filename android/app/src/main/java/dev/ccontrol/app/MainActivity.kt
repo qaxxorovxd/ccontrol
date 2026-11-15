@@ -15,6 +15,7 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import dev.ccontrol.app.ui.screens.AddDeviceScreen
 import dev.ccontrol.app.ui.screens.AppsScreen
+import dev.ccontrol.app.ui.screens.AudioScreen
 import dev.ccontrol.app.ui.screens.ProcessesScreen
 import dev.ccontrol.app.ui.screens.DashboardScreen
 import dev.ccontrol.app.ui.screens.DeviceScreen
@@ -40,7 +41,11 @@ class MainActivity : ComponentActivity() {
                                 app = app,
                                 onOpen = { nav.navigate("device/$it") },
                                 onAdd = { nav.navigate("add") },
+                                onAudio = { nav.navigate("audio") },
                             )
+                        }
+                        composable("audio") {
+                            AudioScreen(app = app, onBack = { nav.popBackStack() })
                         }
                         composable("add") {
                             AddDeviceScreen(

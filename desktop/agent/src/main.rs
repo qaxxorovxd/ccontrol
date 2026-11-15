@@ -205,6 +205,8 @@ fn run(dir: PathBuf, cfg: config::AgentConfig) -> anyhow::Result<()> {
             r = admin_task => { r??; }
             _ = tokio::signal::ctrl_c() => { tracing::info!("shutdown requested"); }
         }
+        // Restore any locally silenced apps before exiting.
+        state.audio.shutdown(&state).await;
         Ok(())
     })
 }

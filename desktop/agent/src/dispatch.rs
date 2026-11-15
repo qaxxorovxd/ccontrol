@@ -41,6 +41,80 @@ pub async fn execute(
                 manifest: state.manifest(),
             })
         }
+        Action::AudioDevices => {
+            let sys = state.adapters.audio.clone();
+            return tokio::task::spawn_blocking(move || sys.inventory())
+                .await
+                .map_err(|e| ProtocolError::new(ErrorCode::Internal, e.to_string()))?
+                .map(ActionResult::Audio)
+                .map_err(|e| match e {
+                    ccontrol_audio_engine::AudioError::Unsupported(m) => {
+                        ProtocolError::new(ErrorCode::Unsupported, m)
+                    }
+                    other => ProtocolError::new(ErrorCode::Internal, other.to_string()),
+                });
+        }
+        Action::SinkPrepare {
+            route_id,
+            key,
+            endpoint_id,
+            lease_secs,
+        } => {
+            return state
+                .audio
+                .prepare_sink(state, caller, route_id, key, endpoint_id, lease_secs)
+                .await
+                .map(ActionResult::Sink)
+        }
+        Action::SinkStop { route_id } => {
+            return state
+                .audio
+                .stop_sink(state, &route_id, None)
+                .await
+                .map(ActionResult::Sink)
+        }
+        Action::RouteStart {
+            route_id,
+            source,
+            dest_host,
+            dest_port,
+            key,
+            lease_secs,
+            silence_local,
+        } => {
+            return state
+                .audio
+                .start_route(
+                    state,
+                    caller,
+                    route_id,
+                    source,
+                    dest_host,
+                    dest_port,
+                    key,
+                    lease_secs,
+                    silence_local,
+                )
+                .await
+                .map(ActionResult::Route)
+        }
+        Action::RouteStop { route_id } => {
+            return state
+                .audio
+                .stop_route(state, &route_id, "the phone")
+                .await
+                .map(ActionResult::Route)
+        }
+        Action::LeaseRenew { route_id } => {
+            return state
+                .audio
+                .renew(caller, &route_id)
+                .map(|_| ActionResult::Done)
+        }
+        Action::RouteList => {
+            let (routes, sinks) = state.audio.list();
+            return Ok(ActionResult::Routes { routes, sinks });
+        }
         Action::Unpair => {
             // Respond first; the session is kicked right after by `revoke`.
             let state = state.clone();
@@ -61,7 +135,15 @@ pub async fn execute(
     };
     let res = tokio::task::spawn_blocking(move || -> Result<ActionResult, ControlError> {
         Ok(match action {
-            Action::DeviceInfo | Action::Unpair => unreachable!(),
+            Action::DeviceInfo
+            | Action::Unpair
+            | Action::AudioDevices
+            | Action::SinkPrepare { .. }
+            | Action::SinkStop { .. }
+            | Action::RouteStart { .. }
+            | Action::RouteStop { .. }
+            | Action::LeaseRenew { .. }
+            | Action::RouteList => unreachable!(),
             Action::TelemetryGet => ActionResult::Telemetry(adapters.telemetry.sample()),
             Action::VolumeGet => ActionResult::Volume(adapters.volume.get()?),
             Action::VolumeSet { level } => ActionResult::Volume(adapters.volume.set_level(level)?),

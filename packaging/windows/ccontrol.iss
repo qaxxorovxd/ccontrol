@@ -1,7 +1,7 @@
 ; Inno Setup script for ccontrol-Setup-x64.exe
 ; Build: iscc /DAppVersion=0.1.0 /DSourceDir=..\..\target\release /DOutDir=..\..\dist packaging\windows\ccontrol.iss
 #ifndef AppVersion
-  #define AppVersion "0.2.0"
+  #define AppVersion "0.3.0"
 #endif
 #ifndef SourceDir
   #define SourceDir "..\..\target\release"

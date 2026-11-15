@@ -6,11 +6,13 @@
 //! over Protobuf for Phase 1 (see `docs/protocols/CONTROL_PROTOCOL.md`); the
 //! message set is closed and versioned so a later switch only affects framing.
 
+pub mod audio;
 pub mod capability;
 pub mod frame;
 pub mod messages;
 pub mod scope;
 
+pub use audio::*;
 pub use capability::{CapabilityManifest, CapabilityStatus};
 pub use frame::{decode_payload, encode_frame, FrameError, MAX_FRAME_LEN};
 #[cfg(feature = "tokio")]
@@ -20,6 +22,8 @@ pub use scope::Scope;
 
 /// Current protocol version spoken by this build.
 pub const PROTOCOL_VERSION: u32 = 1;
+// v0.3 added actions only; older agents answer unknown actions with
+// `invalid_request`, so the version stays 1.
 /// Oldest protocol version this build can still talk to.
 pub const MIN_PROTOCOL_VERSION: u32 = 1;
 /// Default TCP port of the desktop agent's control listener.

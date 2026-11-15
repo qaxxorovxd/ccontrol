@@ -1,6 +1,6 @@
 # Maintainer: ccontrol maintainers
 pkgname=ccontrol
-pkgver=0.2.0
+pkgver=0.3.0
 pkgrel=1
 pkgdesc="ccontrol desktop agent (control this PC from a paired Android phone)"
 arch=('x86_64')
@@ -8,7 +8,7 @@ url="https://github.com/ccontrol/ccontrol"
 license=('MIT' 'Apache-2.0')
 depends=('glibc' 'gcc-libs')
 optdepends=('wireplumber: PipeWire volume control' 'libpulse: PulseAudio volume control (pactl)')
-makedepends=('cargo')
+makedepends=('cargo' 'cmake')
 source=("$pkgname-$pkgver.tar.gz")
 sha256sums=('SKIP')
 

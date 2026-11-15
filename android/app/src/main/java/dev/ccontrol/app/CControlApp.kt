@@ -9,6 +9,13 @@ import androidx.lifecycle.ProcessLifecycleOwner
 import dev.ccontrol.core.data.DeviceRepository
 import dev.ccontrol.core.net.AppInfo
 import dev.ccontrol.core.net.ConnectionManager
+import dev.ccontrol.core.net.RouteOrchestrator
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.launch
 import dev.ccontrol.core.security.DeviceIdentity
 import dev.ccontrol.core.security.KeystoreIdentity
 
@@ -23,6 +30,9 @@ class CControlApp : Application() {
         private set
     lateinit var appInfo: AppInfo
         private set
+    lateinit var routes: RouteOrchestrator
+        private set
+    private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
     @Volatile private var identityCache: DeviceIdentity? = null
 
@@ -38,6 +48,22 @@ class CControlApp : Application() {
         appInfo = AppInfo(deviceName = name, appVersion = BuildConfigVersion.NAME)
         repo = DeviceRepository(filesDir)
         connections = ConnectionManager(this, repo, ::identity, appInfo)
+        routes = RouteOrchestrator(connections, repo)
+        // While any route is live: keep connections in the background and show
+        // the foreground-service notification (with a Stop action).
+        appScope.launch {
+            routes.routes
+                .map { list -> list.filter { it.live }.joinToString(" · ") { "${it.spec.source.label()}: ${it.sourceName} → ${it.destName}" } }
+                .distinctUntilChanged()
+                .collect { summary ->
+                    connections.setKeepAlive(summary.isNotEmpty())
+                    if (summary.isEmpty()) {
+                        RouteService.stop(this@CControlApp)
+                    } else {
+                        runCatching { RouteService.update(this@CControlApp, summary) }
+                    }
+                }
+        }
         ProcessLifecycleOwner.get().lifecycle.addObserver(object : DefaultLifecycleObserver {
             override fun onStart(owner: LifecycleOwner) = connections.setForeground(true)
             override fun onStop(owner: LifecycleOwner) = connections.setForeground(false)
@@ -45,4 +71,4 @@ class CControlApp : Application() {
     }
 }
 
-object BuildConfigVersion { const val NAME = "0.2.0" }
+object BuildConfigVersion { const val NAME = "0.3.0" }

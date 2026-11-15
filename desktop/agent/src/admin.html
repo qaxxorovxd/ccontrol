@@ -59,6 +59,9 @@ td{padding:6px 4px;border-top:1px solid var(--line);vertical-align:top}
   <h2>Trusted controllers</h2>
   <div id="controllers" class="card"></div>
 
+  <h2>Audio routes</h2>
+  <div id="routes" class="card"></div>
+
   <h2>Capabilities</h2>
   <div class="card"><table id="caps"></table></div>
 
@@ -117,6 +120,28 @@ function render(s){
       el("button",{class:"danger",onclick:()=>{ if(confirm("Revoke "+c.name+"? It will be disconnected and must pair again.")) post(`/api/controllers/${c.device_id}/revoke`);}},"Revoke")));
   }
 
+  const rt = document.getElementById("routes"); rt.replaceChildren();
+  const live = st => !["idle","recovery_required"].includes(st);
+  if(!s.routes.length && !s.sinks.length) rt.append(el("div",{class:"empty"},"No audio routes. Phones start them from the Audio screen."));
+  for(const r of s.routes){
+    const src = r.source.kind==="session" ? (r.source.app_name||("PID "+r.source.pid)) : (r.source.kind==="endpoint" ? "Everything playing" : "Test tone");
+    const stats = live(r.state) ? `${Math.round(r.stats.bitrate_kbps)} kb/s · ${r.stats.latency_ms!=null?("~"+Math.round(r.stats.latency_ms)+" ms"):"latency n/a"} · lost ${r.stats.lost}` : "";
+    rt.append(el("div",{class:"row"},
+      el("div",{}, el("b",{},"Sending "+src)," → ",r.dest," ", el("span",{class:"pill "+(r.state==="active"?"on":(r.state==="recovery_required"?"off":""))}, r.state),
+        r.local_silenced ? el("div",{class:"sub"},"Silenced locally (restored when stopped)") : null,
+        stats ? el("div",{class:"sub mono"},stats) : null,
+        r.outcome ? el("div",{class:"sub"},"Outcome: "+r.outcome) : null,
+        r.note ? el("div",{class:"sub"},r.note) : null,
+        r.error ? el("div",{class:"err"},r.error) : null),
+      live(r.state) ? el("button",{class:"danger",onclick:()=>post(`/api/routes/${r.route_id}/stop`)},"Stop & restore") : null));
+  }
+  for(const k of s.sinks){
+    rt.append(el("div",{class:"row"},
+      el("div",{}, el("b",{},"Receiving")," on ",k.endpoint_name," ", el("span",{class:"pill "+(k.state==="playing"?"on":"")}, k.state),
+        el("div",{class:"sub mono"},`played ${k.stats.frames_played} frames · lost ${k.stats.lost} · jitter ${k.stats.jitter_ms.toFixed(1)} ms`),
+        k.error ? el("div",{class:"sub"},k.error) : null),
+      ["waiting","playing"].includes(k.state) ? el("button",{class:"danger",onclick:()=>post(`/api/routes/${k.route_id}/stop`)},"Stop") : null));
+  }
   const caps = document.getElementById("caps"); caps.replaceChildren();
   caps.append(el("tr",{}, el("td",{},"OS"), el("td",{}, `${s.manifest.os_family} ${s.manifest.os_distribution||""} ${s.manifest.os_version} · ${s.manifest.architecture} · session ${s.manifest.session_type}`)));
   for(const [k,v] of Object.entries(s.manifest.capabilities)){

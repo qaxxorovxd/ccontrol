@@ -78,6 +78,15 @@ pub struct Probes {
     pub volume: Option<Result<(), String>>,
     pub media: Option<Result<(), String>>,
     pub windows: Option<Result<(), String>>,
+    pub audio: Option<Result<AudioProbe, String>>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct AudioProbe {
+    pub can_play: bool,
+    pub endpoint_capture: bool,
+    pub process_capture: bool,
+    pub process_capture_reason: Option<String>,
 }
 
 pub fn probe() -> Probes {
@@ -97,6 +106,7 @@ pub fn probe() -> Probes {
         volume: Some(vol),
         media: Some(media),
         windows: Some(windows),
+        audio: None,
     }
 }
 
@@ -175,21 +185,76 @@ pub fn build_manifest(
         ),
     );
 
-    // Per-app audio capture: report OS-level feasibility truthfully, but the
-    // engine is not shipped yet, so it is unavailable.
-    let per_app = match (os.family.as_str(), windows_build()) {
-        ("windows", Some(b)) if b < 20348 => format!(
-            "Windows build {b} lacks process-loopback capture (needs build 20348+); engine not implemented yet"
-        ),
-        ("windows", _) => "OS supports process-loopback capture; audio engine not implemented yet".into(),
-        ("linux", _) => "PipeWire per-stream capture possible; audio engine not implemented yet".into(),
-        _ => "Unsupported OS".into(),
-    };
-    put(
-        "audio.per_app_capture",
-        CapabilityStatus::unavailable(per_app, Some(Scope::AudioRoute.as_str())),
-    );
-    put("audio.route", not_yet(Scope::AudioRoute));
+    let route_scope = Some(Scope::AudioRoute.as_str());
+    match &probes.audio {
+        Some(Ok(a)) => {
+            put(
+                "audio.per_app_capture",
+                if a.process_capture {
+                    CapabilityStatus {
+                        available: true,
+                        reason: Some(if os.family == "linux" {
+                            "PipeWire stream capture (local playback is kept on Linux)".into()
+                        } else {
+                            "Windows process loopback".into()
+                        }),
+                        scope: route_scope.map(str::to_owned),
+                    }
+                } else {
+                    CapabilityStatus::unavailable(
+                        a.process_capture_reason
+                            .clone()
+                            .unwrap_or_else(|| "Not supported".into()),
+                        route_scope,
+                    )
+                },
+            );
+            put(
+                "audio.capture_output",
+                if a.endpoint_capture {
+                    CapabilityStatus::available(route_scope)
+                } else {
+                    CapabilityStatus::unavailable("No output device to capture", route_scope)
+                },
+            );
+            put(
+                "audio.playback",
+                if a.can_play {
+                    CapabilityStatus::available(route_scope)
+                } else {
+                    CapabilityStatus::unavailable("No output device", route_scope)
+                },
+            );
+            put(
+                "audio.route",
+                CapabilityStatus {
+                    available: a.can_play || a.endpoint_capture,
+                    reason: Some("Opus over authenticated UDP; source agent owns the route and restores it on stop/crash".into()),
+                    scope: route_scope.map(str::to_owned),
+                },
+            );
+        }
+        Some(Err(e)) => {
+            for k in [
+                "audio.per_app_capture",
+                "audio.capture_output",
+                "audio.playback",
+                "audio.route",
+            ] {
+                put(k, CapabilityStatus::unavailable(e.clone(), route_scope));
+            }
+        }
+        None => {
+            for k in [
+                "audio.per_app_capture",
+                "audio.capture_output",
+                "audio.playback",
+                "audio.route",
+            ] {
+                put(k, not_yet(Scope::AudioRoute));
+            }
+        }
+    }
 
     let input_reason = match os.session_type.as_str() {
         "wayland" => {

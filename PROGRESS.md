@@ -1,6 +1,6 @@
 # Progress
 
-_Last update: 2026-11-15 (v0.2.0)_
+_Last update: 2026-11-15 (v0.3.0)_
 
 ## Milestone status
 
@@ -8,55 +8,72 @@ _Last update: 2026-11-15 (v0.2.0)_
 |---|---|
 | 0 Feasibility + capability matrix | ✅ [FEATURE_MATRIX.md](docs/os-capabilities/FEATURE_MATRIX.md) |
 | 1 Trust + control vertical slice | ✅ desktop verified on Windows 10 19045; Android verified via JVM interop, **not yet on a device** |
-| 2 Dashboard + controls | ✅ processes (list, graceful quit, confirmed force quit), app windows (list, close), now playing + session media controls, disks/battery, self-unpair, measured idle footprint. Services and display controls moved to Phase 6. |
-| 3 Audio engine + recovery | ⏳ design only ([AUDIO_ROUTING.md](docs/architecture/AUDIO_ROUTING.md), [RECOVERY.md](docs/architecture/RECOVERY.md)) |
-| 4 3D workspace | ⏳ |
+| 2 Dashboard + controls | ✅ processes, app windows, now playing, disks/battery, self-unpair |
+| 3 Audio engine + recovery | ✅ on Windows: real PC→PC (two agent processes) whole-output and test-tone routes, Opus/UDP with AEAD, jitter buffer, measured stats, agent-owned leases, write-ahead journal, crash reconcile (incl. real `taskkill /F`). Per-app capture is implemented for Windows ≥ 20348 and PipeWire but **not run** (this PC is 19045; no Linux host). |
+| 4 3D workspace | ⏳ (the 2D route matrix exists and uses the same route API the 3D view will call) |
 | 5 Notifications | ⏳ |
-| 6 Advanced control | ⏳ |
-| 7 Release quality | 🟡 CI pipeline + Windows installer done; Linux packages CI-only |
+| 6 Advanced control | ⏳ (services and display moved here) |
+| 7 Release quality | 🟡 CI pipeline + Windows installer; Linux packages CI-only |
 
-## Phase 2 additions (v0.2.0)
+## Phase 3 additions (v0.3.0)
 
-| Area | Desktop agent | Android |
-|---|---|---|
-| Processes | `process.list` via sysinfo, CPU normalized to whole-machine %; `process.terminate` graceful first (WM_CLOSE to the app's windows / SIGTERM), force only on request; refuses the agent, PIDs ≤ 4, critical system processes and other users' processes; PID-reuse name check | Processes screen: search, sort (CPU/Memory/Name), "Mine" filter, lock icon + reason on protected rows, Quit → Force quit two-step dialog |
-| Apps & windows | `app.list` (EnumWindows, Alt+Tab filter, cloaked excluded), `app.close` (WM_CLOSE after HWND/PID re-check). Linux reports unavailable with reason. | Apps & windows screen with close confirmation |
-| Media | `media.status` via SMTC (Windows) / MPRIS (Linux); commands now target the current SMTC session, falling back to media keys | Now-playing card (title, artist, app, progress), play/pause state, buttons follow `can_*` |
-| Telemetry | Disks (pseudo-filesystems filtered), battery % + charging | Disk meters, battery line |
-| Pairing | `pairing.unpair`: a controller can remove its own trust (no scope needed) | "Forget" now also removes access on the computer when it is online |
-| Dashboard | — | Quick play/pause per online computer |
+* `crates/audio-engine`:
+  - Opus codec (10 ms, 128 kb/s, FEC).
+  - ChaCha20-Poly1305 packets with a replay window.
+  - Adaptive jitter buffer: FEC/PLC, drift control, RFC 3550 jitter.
+  - Sender and receiver threads, with receiver reports for RTT.
+  - WASAPI backend: endpoints, sessions, endpoint loopback, process loopback (≥ 20348), render, session mute.
+  - PipeWire backend: `pw-dump` / `pw-record` / `pw-play`.
+* Agent (`desktop/agent/src/audio.rs`):
+  - Source-route state machine exactly as specified, with write-ahead journal and leases.
+  - Compare-and-swap restore and startup reconcile.
+  - Safety check that undoes local silencing if it would silence the capture.
+  - Sinks, arbitration (one route per source, owner-only renew).
+  - The settings page lists routes and sinks with a local **Stop & restore**.
+* Protocol: `audio.devices`, `audio.sink.prepare/stop`, `route.audio.start/stop`, `route.lease.renew`, `route.list`.
+* Android:
+  - `RouteOrchestrator`: prepare the sink → start → renew leases every 10 s → stats every 2 s → stop.
+  - Audio screen: 2D route matrix, output picker, "silence on source" option (enabled only where supported), live route cards with latency, loss, jitter, bitrate, level and outcome.
+  - `connectedDevice` foreground service with a Stop action while routes are live; connections are kept in the background only then.
+* `ccontrol-ctl route` drives a full route between two agents from the command line.
 
-## Verified on this machine (Windows 10 Pro 19045, x86_64)
+## Verified on this machine (Windows 10 Pro 19045, x86_64; Realtek + USB speakers)
 
 | Check | Result |
 |---|---|
-| `cargo fmt --check`, `cargo clippy -D warnings` (Windows + Linux cross-check of adapters) | clean |
-| `cargo test --workspace` | **52 passed**, 0 failed (14 end-to-end TLS tests incl. process safeguards, app scopes, self-unpair) |
-| Real agent, `ccontrol-ctl` | 279 processes listed (152 terminable); `lsass.exe` force kill → `Forbidden: Critical system process`; Notepad opened → `process.terminate` graceful → `exited:true`; second Notepad → `app.close` → closed; `app.list` showed the real Chrome/Claude/ChatGPT windows with focus; `media.status` → `active:false` (nothing playing); telemetry disk `C:\` 476 GiB / 242 GiB free, no battery |
-| Idle footprint (release agent, 60 s idle, no controller) | **0 ms CPU**, working set 20.8 MB, private 10.8 MB, 9 threads, 324 handles; binary 5.4 MB |
-| Android unit tests | **10 passed** (Phase 2 wire shapes pinned to the Rust literals) |
-| Kotlin↔Rust interop against the real agent | **4 passed** (adds: real process list, agent marked non-terminable, terminate denied without scope, disks present, self-unpair → `revoked` + untrusted) |
-| Android lint, debug + minified release build | passed; release APK 3.1 MB, versionName 0.2.0 |
-| Windows installer | rebuilt for 0.2.0 (`ccontrol-agent --version` → 0.2.0) |
+| `cargo fmt --check`, `cargo clippy -D warnings` (+ Linux cross-check of non-C crates) | clean |
+| `cargo test --workspace` | **78 passed**, 0 failed (4 hardware tests ignored by default) |
+| Hardware tests (`windows_hw -- --ignored`) | **4 passed**: real endpoints/sessions listed; loopback captured the played tone (peak 0.100 for a 0.1 tone, 81 frames in 800 ms); playing on the USB device is *not* heard on the Realtek loopback, and silence stays paced; session mute is reversible |
+| Agent route tests (e2e, fake audio, real UDP/Opus/journal) | full lifecycle with true handoff (`restored`), lease expiry rollback on both agents, user-unmute respected (`left_user_change`), unconfirmed destination rolls back without muting, safety check undoes a mute that silences capture, second phone gets `busy`/`forbidden`, **crash at every one of 9 journal states reconciles correctly** |
+| Two real agent processes, `ccontrol-ctl route` | Test tone → USB speakers: ACTIVE in 548 ms, 474 frames, **0 lost**, jitter 0.01 ms, est. latency ~60 ms, 165 kb/s, out peak 0.151 for 0.150 in. Real Realtek output (Windows notification chimes) → USB speakers: ACTIVE in 553 ms, 668 frames, 0 lost, peaks reproduced (0.15–0.21 → 0.17–0.24), latency 50–80 ms |
+| Real crash | `taskkill /F` on the source mid-route → destination sink stopped on lease expiry ("lease expired"); after restart the source reconciled the `active` journal row to `idle`/`not_needed` ("recovered after the agent stopped during 'active'"), 0 unfinished rows |
+| Settings page | live route row with stats; **Stop & restore** stopped it (outcome shown) |
+| Android unit tests | **11 passed** (audio wire shapes pinned to Rust) |
+| Kotlin↔Rust interop | **5 passed**, incl. a test-tone route between **two real agent processes** driven by the Kotlin encoding (playing, 0 loss, RTT reported, stop → `not_needed`) |
+| Android lint, debug + minified release | passed; APK 3.2 MB, versionName 0.3.0, FGS permissions present |
+| Idle footprint (release 0.3.0, 60 s, no controller, no route) | **0 ms CPU**, working set 20.6 MB, private 10.5 MB, 10 threads; binary 6.5 MB |
+| Windows installer 0.3.0 | built 4.4 MB; silent install → `--version 0.3.0` → silent uninstall clean |
 
-Artifacts in `dist/` (git-ignored) with `SHA256SUMS`: `ccontrol-Setup-x64.exe` and
-`ccontrol-android-arm64.apk` (minified release signed with the **local debug key**, side-load only).
+Artifacts in `dist/` (git-ignored) with `SHA256SUMS`. The APK is the minified release build
+signed with the **local debug key** (side-load only).
 
 ## Not verified / known gaps
-* **No Android device run yet** (emulator needs a hypervisor driver; no phone over adb). Keystore
-  client auth, NSD, QR scanner, the API 37 local-network permission, R8-minified serialization and
-  every Compose screen are compiled and lint-clean but unseen on a screen.
-* SMTC with real playback (title/position, session-targeted skip) not exercised: nothing was playing.
-* Linux agent never executed. MPRIS status, SIGTERM path, `/sys` battery are type-checked only.
-* Linux window listing not implemented (X11 EWMH planned; Wayland has no generic API).
-* Services (SCM/systemd), display, power, files, input, notifications, audio routing: not started.
-* Tauri tray UI not built (loopback settings page instead); JSON instead of Protobuf; manual DI +
-  AtomicFile instead of Hilt/Room (see ADRs in OVERVIEW.md).
-* Linux private key is a 0600 file; Secret Service/TPM sealing is pending.
+* **No Android device run yet.** The Audio screen, foreground service and notification have not
+  been seen on a screen.
+* **Per-app capture end to end** (Windows process loopback, PipeWire stream capture) and **true
+  handoff with a real app muted** were not run here: this PC is build 19045, and there is no
+  Linux host. A crash while a real app is muted is covered by the journal tests with a fake
+  audio system and by the hardware mute/unmute test, not by one combined hardware run.
+* All measurements are over loopback on one PC. **No Wi-Fi/Ethernet latency has been measured yet.**
+* Drift is handled by frame drop/concealment, not resampling.
+* Linux local silencing is not implemented (local playback is kept and the reason is shown).
+* Phone as audio source or destination is not implemented.
+* Still open from earlier phases: Tauri tray UI, Protobuf, Hilt/Room, Linux key sealing,
+  Linux window listing.
 
 ## Next engineering tasks
-1. Run the APK on a physical Android device against the Windows agent.
-2. Push to GitHub so CI builds `.deb`/AppImage/rpm and runs the Linux tests.
-3. Phase 3: audio session enumeration (WASAPI sessions with PID, PipeWire nodes), then one real
-   PC→PC Opus stream with route journal, leases and kill-at-every-state tests. This Windows 10
-   machine (build 19045) can be a destination but not a per-app capture source.
+1. Run the APK on a phone with two PCs on Wi-Fi; publish measured latency, jitter and loss for that LAN.
+2. On a Windows 11 / build ≥ 20348 machine: verify process loopback and the true-handoff mute
+   (does the session mute keep process-loopback audio?), then kill the agent while the app is muted.
+3. Push to GitHub to run CI (Linux build, `.deb`/AppImage/rpm) and test the PipeWire backend on a Linux desktop.
+4. Phase 4: 3D workspace (SceneView/Filament) wired to `RouteOrchestrator.start`, with the 2D matrix as the accessible alternative.
