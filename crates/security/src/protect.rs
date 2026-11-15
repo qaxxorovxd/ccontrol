@@ -133,10 +133,14 @@ mod tests {
     fn round_trip() {
         let secret = b"top secret key material";
         let sealed = protect(secret).unwrap();
-        assert_ne!(
-            &sealed[1..],
-            secret.as_slice().get(..sealed.len() - 1).unwrap_or(&[])
-        );
+        // DPAPI encrypts on Windows; elsewhere the key is stored as-is in a 0600 file.
+        #[cfg(windows)]
+        {
+            assert_eq!(sealed[0], TAG_DPAPI);
+            assert!(!sealed.windows(secret.len()).any(|w| w == secret));
+        }
+        #[cfg(not(windows))]
+        assert_eq!(sealed[0], TAG_PLAIN);
         assert_eq!(unprotect(&sealed).unwrap(), secret);
     }
 
