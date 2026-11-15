@@ -84,8 +84,13 @@ jobs:
             # runner's auto-generated debug key so it is installable (side-load only).
             echo "::warning::No signing secrets: release APK signed with a debug key"
             BT="$ANDROID_HOME/build-tools/36.0.0"
+            KS="$HOME/.android/debug.keystore"
+            if [ ! -f "$KS" ]; then
+              KS="$RUNNER_TEMP/ci-debug.jks"
+              keytool -genkeypair -keystore "$KS" -alias androiddebugkey -storepass android -keypass android                 -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=ccontrol CI debug,O=ccontrol,C=US"
+            fi
             "$BT/zipalign" -f -p 4 app/build/outputs/apk/release/app-release-unsigned.apk "$RUNNER_TEMP/aligned.apk"
-            "$BT/apksigner" sign --ks "$HOME/.android/debug.keystore" --ks-pass pass:android --key-pass pass:android               --ks-key-alias androiddebugkey --out ../dist/ccontrol-android-arm64.apk "$RUNNER_TEMP/aligned.apk"
+            "$BT/apksigner" sign --ks "$KS" --ks-pass pass:android --key-pass pass:android               --ks-key-alias androiddebugkey --out ../dist/ccontrol-android-arm64.apk "$RUNNER_TEMP/aligned.apk"
             "$BT/apksigner" verify ../dist/ccontrol-android-arm64.apk
           fi
       - uses: actions/upload-artifact@v4
