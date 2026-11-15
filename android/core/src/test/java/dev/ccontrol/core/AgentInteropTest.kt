@@ -136,6 +136,14 @@ class AgentInteropTest {
         assertTrue(manifest.capabilities.isNotEmpty())
         val tel = (s.request(Action.TelemetryGet) as ActionResult.TelemetryResult).telemetry
         assertTrue(tel.memoryTotalBytes > 0)
+        // Phase 2: process list from the real OS (device.read), terminate denied.
+        val procs = (s.request(Action.ProcessList) as ActionResult.Processes).processes
+        assertTrue(procs.size > 5)
+        val agentProc = procs.first { it.name.startsWith("ccontrol-agent") }
+        assertFalse(agentProc.terminable)
+        val noKill = runCatching { s.request(Action.ProcessTerminate(agentProc.pid, agentProc.name, true)) }.exceptionOrNull() as RemoteException
+        assertEquals("scope_denied", noKill.error.code)
+        assertTrue(tel.disks.isNotEmpty())
         // media.control was not granted -> typed denial, nothing executed.
         val denied = runCatching { s.request(Action.VolumeSet(0.5f)) }.exceptionOrNull() as RemoteException
         assertEquals("scope_denied", denied.error.code)
@@ -159,6 +167,22 @@ class AgentInteropTest {
         val s3 = AgentSession.open("127.0.0.1", port, me, serverFp, app)
         assertFalse("revoked phone must not be trusted", s3.helloAck.paired)
         s3.close()
+    }
+
+    @Test fun controllerCanUnpairItself() = runBlocking {
+        val me = softwareIdentity()
+        val s = AgentSession.open("127.0.0.1", port, me, null, app)
+        val pairing = async(kotlinx.coroutines.Dispatchers.IO) { PairingFlow.run(s, me, emptyList()) {} }
+        val (reqId, _) = pendingSas()
+        admin("POST", "/api/pairing/$reqId/accept", """{"scopes":[]}""")
+        assertTrue(pairing.await() is PairingUpdate.Accepted)
+        s.startReader()
+        val revoked = async(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) { s.events.first { it.event == "revoked" } }
+        assertEquals(ActionResult.Done, s.request(Action.Unpair))
+        withTimeout(5000) { revoked.await() }
+        val again = AgentSession.open("127.0.0.1", port, me, s.serverFingerprint, app)
+        assertFalse(again.helloAck.paired)
+        again.close()
     }
 
     @Test fun rejectedPairingLeavesNoTrust() = runBlocking {

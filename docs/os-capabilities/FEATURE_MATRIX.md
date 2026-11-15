@@ -23,6 +23,10 @@ The capabilities below are deliberately kept separate. They are **not** intercha
 | **Remote input** | 📐 `SendInput` (not on secure desktop / UAC prompts / lock screen) | 📐 | 📐 X11: XTEST. Wayland: RemoteDesktop portal (user prompt) or libei | same | n/a |
 | **Screen capture** | 📐 Windows.Graphics.Capture / DXGI Desktop Duplication | 📐 | 📐 X11: XShm. Wayland: ScreenCast portal + PipeWire (user prompt) | same | 📐 MediaProjection (consent each session) |
 | **Telemetry (CPU/RAM/uptime)** | ✅ sysinfo | 🟡 | 🟡 sysinfo (/proc) | 🟡 | n/a |
+| **Disks / battery** | ✅ sysinfo disks; `GetSystemPowerStatus` (this desktop: no battery → omitted) | 🟡 | 🟡 sysinfo; `/sys/class/power_supply` | 🟡 | n/a |
+| **Now playing (media session)** | ✅ SMTC `GlobalSystemMediaTransportControlsSessionManager` (1809+; only apps that publish to SMTC) | 🟡 | 🟡 MPRIS `Metadata`/`PlaybackStatus` | 🟡 | n/a |
+| **Process list / end process** | ✅ sysinfo + WM_CLOSE graceful / TerminateProcess force; own-user only | 🟡 | 🟡 sysinfo + SIGTERM / SIGKILL | 🟡 | n/a |
+| **App windows list / close** | ✅ EnumWindows (Alt+Tab filter, cloaked windows excluded) + WM_CLOSE | 🟡 | ⏳ X11 EWMH planned; ⛔ no generic Wayland API (reported unavailable) | same | n/a |
 | **LAN discovery** | ✅ mDNS advertise (`mdns-sd`) | 🟡 | 🟡 | 🟡 | 🟡 `NsdManager` browse |
 
 Sources: Microsoft "Application loopback audio capture" sample (requires Windows 10 build
@@ -43,12 +47,16 @@ docs; XDG Desktop Portal RemoteDesktop/ScreenCast specs; Android `AudioPlaybackC
 | Capability manifest with reasons | ✅ | 🟡 | ✅ rendered |
 | Master volume get/set/mute | ✅ real Realtek endpoint | 🟡 | 🟡 UI |
 | Media keys | 🟡 | 🟡 | 🟡 UI |
-| Telemetry | ✅ | 🟡 | 🟡 UI |
+| Telemetry (+ disks, battery) | ✅ | 🟡 | 🟡 UI |
+| Now playing + session-targeted media controls | ✅ SMTC (verified "no session" state; playback not exercised) | 🟡 MPRIS | 🟡 UI |
+| Process list, graceful quit, confirmed force quit | ✅ (Notepad closed gracefully; lsass refused) | 🟡 | 🟡 UI; ✅ list + denial via interop |
+| App windows list + close | ✅ (real Chrome/Claude/Notepad windows) | reported unavailable with reason | 🟡 UI |
+| Controller self-unpair ("Forget" removes access on the computer) | ✅ | 🟡 | ✅ interop |
 | Settings UI (loopback, token-protected) | ✅ browser page | 🟡 | n/a |
 | Autostart (opt-in) | 🟡 HKCU Run | 🟡 systemd user unit | n/a |
 | Installer | ✅ Inno Setup .exe built + silent install/uninstall tested | 🟡 .deb/.AppImage/.rpm/PKGBUILD recipes (CI) | ✅ APK built (no device test) |
 
 Everything else in the product brief (audio routing, notifications, 3D workspace, input,
-files, power, custom commands, Tauri tray UI) is **not implemented yet**; the agent
+files, services, power, custom commands, Tauri tray UI) is **not implemented yet**; the agent
 advertises those capabilities as unavailable with a reason, and the Android UI shows them
 disabled.

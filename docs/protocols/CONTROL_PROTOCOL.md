@@ -30,12 +30,30 @@ actually presented (`identity_mismatch`), or whose version is outside `[1, 1]` (
 | `volume.set` | `level` 0.0–1.0 | `media.control` | `volume` |
 | `volume.mute` | `muted` bool | `media.control` | `volume` |
 | `media.key` | `key`: `play_pause`/`next`/`previous`/`stop` | `media.control` | `done` |
+| `media.status` | – | `media.control` | `media_status` (`active:false` when nothing plays) |
+| `process.list` | – | `device.read` | `processes` (pid, name, exe?, cpu % of machine, memory, `same_user`, `terminable`, `protected_reason`) |
+| `process.terminate` | `pid`, `name`, `force` | `process.terminate` | `terminated` (`method`, `exited`, `note`) |
+| `app.list` | – | `device.read` | `apps` (`window_id`, `pid`, `process_name`, `title`, `focused`, `minimized`) |
+| `app.close` | `window_id`, `pid` | `process.terminate` | `done` |
+| `pairing.unpair` | – | none (affects the caller only) | `done`, then `event: revoked` and close |
+
+### Process and window semantics (v0.2)
+
+* **Applications, windows and processes are different things.** `app.close` asks one window to
+  close (WM_CLOSE, like clicking X). `process.terminate` with `force:false` asks the whole program
+  to quit: WM_CLOSE to all its windows on Windows, SIGTERM on Linux. The agent waits up to 5 s and
+  reports `exited`. A windowless process has no graceful path on Windows (`unsupported`).
+* `force:true` kills immediately. The app only sends it after a second, explicit confirmation.
+* Guards: `name` must match the live PID (reuse protection). The agent itself, PIDs ≤ 4, a
+  critical-process list (csrss, lsass, winlogon, svchost, dwm, … / systemd, dbus, the compositor,
+  PipeWire, …) and **any process owned by another OS user** are refused with `forbidden`. The
+  agent never elevates.
 
 Unknown actions fail deserialization; there is no shell or free-form command endpoint.
 
 ## Errors
 
-`incompatible_protocol, not_paired, identity_mismatch, pairing_rejected, pairing_timeout,
+`incompatible_protocol, not_paired, identity_mismatch, pairing_rejected, pairing_timeout, forbidden,
 pairing_failed, scope_denied, unsupported, invalid_request, rate_limited, busy, timeout, internal`.
 
 ## Request semantics

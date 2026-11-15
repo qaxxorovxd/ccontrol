@@ -14,6 +14,8 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import dev.ccontrol.app.ui.screens.AddDeviceScreen
+import dev.ccontrol.app.ui.screens.AppsScreen
+import dev.ccontrol.app.ui.screens.ProcessesScreen
 import dev.ccontrol.app.ui.screens.DashboardScreen
 import dev.ccontrol.app.ui.screens.DeviceScreen
 import dev.ccontrol.app.ui.screens.PairingScreen
@@ -69,7 +71,18 @@ class MainActivity : ComponentActivity() {
                             )
                         }
                         composable("device/{id}") { e ->
-                            DeviceScreen(app = app, deviceId = e.arguments!!.getString("id")!!, onBack = { nav.popBackStack() })
+                            val id = e.arguments!!.getString("id")!!
+                            DeviceScreen(
+                                app = app, deviceId = id, onBack = { nav.popBackStack() },
+                                onOpenProcesses = { nav.navigate("device/$id/processes") },
+                                onOpenApps = { nav.navigate("device/$id/apps") },
+                            )
+                        }
+                        composable("device/{id}/processes") { e ->
+                            ProcessesScreen(app = app, deviceId = e.arguments!!.getString("id")!!, onBack = { nav.popBackStack() })
+                        }
+                        composable("device/{id}/apps") { e ->
+                            AppsScreen(app = app, deviceId = e.arguments!!.getString("id")!!, onBack = { nav.popBackStack() })
                         }
                     }
                 }

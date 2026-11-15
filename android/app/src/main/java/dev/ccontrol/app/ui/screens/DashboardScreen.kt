@@ -46,6 +46,13 @@ import dev.ccontrol.app.ui.components.SectionLabel
 import dev.ccontrol.app.ui.components.StatusPill
 import dev.ccontrol.app.ui.theme.Palette
 import dev.ccontrol.core.net.LinkState
+import dev.ccontrol.core.protocol.Action
+import dev.ccontrol.core.protocol.MediaKey
+import dev.ccontrol.core.protocol.Scopes
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material3.IconButton
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.launch
 
 const val LOCAL_NETWORK_PERMISSION = "android.permission.ACCESS_LOCAL_NETWORK"
 
@@ -80,6 +87,7 @@ fun LocalNetworkGate(onGranted: () -> Unit = {}) {
 fun DashboardScreen(app: CControlApp, onOpen: (String) -> Unit, onAdd: () -> Unit) {
     val devices by app.repo.devices.collectAsStateWithLifecycle()
     val states by app.connections.states.collectAsStateWithLifecycle()
+    val scope = rememberCoroutineScope()
 
     Scaffold(
         containerColor = Palette.Background,
@@ -135,6 +143,13 @@ fun DashboardScreen(app: CControlApp, onOpen: (String) -> Unit, onAdd: () -> Uni
                                 )
                             }
                             StatusPill(st)
+                            val canMedia = st is LinkState.Online && Scopes.MEDIA_CONTROL in st.scopes &&
+                                st.manifest?.capabilities?.get("media.keys")?.available != false
+                            if (canMedia) {
+                                IconButton(onClick = {
+                                    scope.launch { runCatching { app.connections.call(d.deviceId, Action.Media(MediaKey.PlayPause)) } }
+                                }) { Icon(Icons.Filled.PlayArrow, "Play or pause on ${d.displayName}", tint = Palette.Muted) }
+                            }
                         }
                         if (st is LinkState.NotTrusted || st is LinkState.IdentityChanged || st is LinkState.Incompatible) {
                             Text(
@@ -142,7 +157,6 @@ fun DashboardScreen(app: CControlApp, onOpen: (String) -> Unit, onAdd: () -> Uni
                                     is LinkState.NotTrusted -> st.reason
                                     is LinkState.IdentityChanged -> st.reason
                                     is LinkState.Incompatible -> st.reason
-                                    else -> ""
                                 },
                                 style = MaterialTheme.typography.bodySmall, color = Palette.Warn,
                                 modifier = Modifier.fillMaxWidth().padding(top = 10.dp),

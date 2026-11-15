@@ -108,6 +108,69 @@ data class Telemetry(
     @SerialName("memory_total_bytes") val memoryTotalBytes: Long,
     @SerialName("uptime_secs") val uptimeSecs: Long,
     @SerialName("battery_percent") val batteryPercent: Float? = null,
+    @SerialName("battery_charging") val batteryCharging: Boolean? = null,
+    val disks: List<DiskInfo> = emptyList(),
+)
+
+@Serializable
+data class DiskInfo(
+    val mount: String,
+    val name: String,
+    @SerialName("total_bytes") val totalBytes: Long,
+    @SerialName("available_bytes") val availableBytes: Long,
+    val removable: Boolean = false,
+)
+
+@Serializable
+data class MediaStatus(
+    val active: Boolean,
+    val app: String? = null,
+    val title: String? = null,
+    val artist: String? = null,
+    val album: String? = null,
+    /** playing | paused | stopped | unknown */
+    val status: String = "unknown",
+    @SerialName("position_ms") val positionMs: Long? = null,
+    @SerialName("duration_ms") val durationMs: Long? = null,
+    @SerialName("can_play_pause") val canPlayPause: Boolean = false,
+    @SerialName("can_next") val canNext: Boolean = false,
+    @SerialName("can_previous") val canPrevious: Boolean = false,
+) {
+    val isPlaying get() = status == "playing"
+}
+
+@Serializable
+data class ProcessInfo(
+    val pid: Long,
+    @SerialName("parent_pid") val parentPid: Long? = null,
+    val name: String,
+    val exe: String? = null,
+    @SerialName("cpu_percent") val cpuPercent: Float,
+    @SerialName("memory_bytes") val memoryBytes: Long,
+    val status: String = "",
+    @SerialName("start_time") val startTime: Long = 0,
+    @SerialName("same_user") val sameUser: Boolean = false,
+    val terminable: Boolean = false,
+    @SerialName("protected_reason") val protectedReason: String? = null,
+)
+
+@Serializable
+data class TerminateOutcome(
+    val pid: Long,
+    /** graceful | force */
+    val method: String,
+    val exited: Boolean,
+    val note: String? = null,
+)
+
+@Serializable
+data class AppWindow(
+    @SerialName("window_id") val windowId: Long,
+    val pid: Long,
+    @SerialName("process_name") val processName: String,
+    val title: String,
+    val focused: Boolean = false,
+    val minimized: Boolean = false,
 )
 
 enum class MediaKey(val wire: String) { PlayPause("play_pause"), Next("next"), Previous("previous"), Stop("stop") }
@@ -122,12 +185,22 @@ sealed class Action(val name: String) {
     }
     data class VolumeMute(val muted: Boolean) : Action("volume.mute")
     data class Media(val key: MediaKey) : Action("media.key")
+    data object MediaStatusGet : Action("media.status")
+    data object ProcessList : Action("process.list")
+    data class ProcessTerminate(val pid: Long, val processName: String, val force: Boolean) : Action("process.terminate")
+    data object AppList : Action("app.list")
+    data class AppClose(val windowId: Long, val pid: Long) : Action("app.close")
+    data object Unpair : Action("pairing.unpair")
 }
 
 sealed interface ActionResult {
     data class Manifest(val manifest: CapabilityManifest) : ActionResult
     data class TelemetryResult(val telemetry: Telemetry) : ActionResult
     data class Volume(val state: VolumeState) : ActionResult
+    data class Media(val status: MediaStatus) : ActionResult
+    data class Processes(val processes: List<ProcessInfo>) : ActionResult
+    data class Terminated(val outcome: TerminateOutcome) : ActionResult
+    data class Apps(val windows: List<AppWindow>) : ActionResult
     data object Done : ActionResult
     data class Unknown(val kind: String) : ActionResult
 }
@@ -183,6 +256,8 @@ object Wire {
                 is Action.VolumeSet -> put("level", a.level)
                 is Action.VolumeMute -> put("muted", a.muted)
                 is Action.Media -> put("key", a.key.wire)
+                is Action.ProcessTerminate -> { put("pid", a.pid); put("name", a.processName); put("force", a.force) }
+                is Action.AppClose -> { put("window_id", a.windowId); put("pid", a.pid) }
                 else -> {}
             }
         }
@@ -227,6 +302,10 @@ object Wire {
         "manifest" -> ActionResult.Manifest(json.decodeFromJsonElement(o["manifest"] ?: throw ProtocolException("manifest")))
         "telemetry" -> ActionResult.TelemetryResult(json.decodeFromJsonElement(o))
         "volume" -> ActionResult.Volume(json.decodeFromJsonElement(o))
+        "media_status" -> ActionResult.Media(json.decodeFromJsonElement(o))
+        "processes" -> ActionResult.Processes(json.decodeFromJsonElement(o["processes"] ?: throw ProtocolException("processes")))
+        "terminated" -> ActionResult.Terminated(json.decodeFromJsonElement(o))
+        "apps" -> ActionResult.Apps(json.decodeFromJsonElement(o["windows"] ?: throw ProtocolException("windows")))
         "done" -> ActionResult.Done
         else -> ActionResult.Unknown(kind ?: "?")
     }

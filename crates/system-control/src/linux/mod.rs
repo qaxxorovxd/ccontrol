@@ -6,8 +6,10 @@
 //! * Media: MPRIS over the D-Bus session bus.
 
 use crate::{check_level, ControlError, MediaControl, VolumeControl};
-use ccontrol_protocol::{MediaKey, VolumeState};
+use ccontrol_protocol::{MediaKey, MediaStatus, PlaybackStatus, VolumeState};
+use std::collections::HashMap;
 use std::process::Command;
+use zbus::zvariant::OwnedValue;
 
 fn run(exe: &str, args: &[&str]) -> Result<String, ControlError> {
     let out = Command::new(exe)
@@ -103,19 +105,60 @@ impl VolumeControl for CliVolume {
 
 pub struct Mpris;
 
+const PLAYER_IFACE: &str = "org.mpris.MediaPlayer2.Player";
+const MPRIS_PATH: &str = "/org/mpris/MediaPlayer2";
+
+fn session() -> Result<zbus::blocking::Connection, ControlError> {
+    zbus::blocking::Connection::session()
+        .map_err(|e| ControlError::Unsupported(format!("no D-Bus session bus: {e}")))
+}
+
+fn player_proxy<'a>(
+    conn: &'a zbus::blocking::Connection,
+    name: &'a str,
+) -> Result<zbus::blocking::Proxy<'a>, ControlError> {
+    zbus::blocking::Proxy::new(conn, name, MPRIS_PATH, PLAYER_IFACE)
+        .map_err(|e| ControlError::Platform(e.to_string()))
+}
+
+/// Pick the player that is playing, else the first one found.
+fn pick_player(conn: &zbus::blocking::Connection) -> Result<Option<String>, ControlError> {
+    let dbus = zbus::blocking::fdo::DBusProxy::new(conn)
+        .map_err(|e| ControlError::Platform(e.to_string()))?;
+    let names: Vec<String> = dbus
+        .list_names()
+        .map_err(|e| ControlError::Platform(e.to_string()))?
+        .iter()
+        .map(|n| n.as_str().to_owned())
+        .filter(|n| n.starts_with("org.mpris.MediaPlayer2."))
+        .collect();
+    for n in &names {
+        if let Ok(p) = player_proxy(conn, n) {
+            if p.get_property::<String>("PlaybackStatus").ok().as_deref() == Some("Playing") {
+                return Ok(Some(n.clone()));
+            }
+        }
+    }
+    Ok(names.into_iter().next())
+}
+
+fn meta_str(m: &HashMap<String, OwnedValue>, k: &str) -> Option<String> {
+    let v = m.get(k)?.try_clone().ok()?;
+    String::try_from(v).ok().filter(|s| !s.is_empty())
+}
+
+fn meta_artists(m: &HashMap<String, OwnedValue>) -> Option<String> {
+    let v = m.get("xesam:artist")?.try_clone().ok()?;
+    Vec::<String>::try_from(v)
+        .ok()
+        .map(|a| a.join(", "))
+        .filter(|s| !s.is_empty())
+}
+
 impl MediaControl for Mpris {
     fn send(&self, key: MediaKey) -> Result<(), ControlError> {
-        let conn = zbus::blocking::Connection::session()
-            .map_err(|e| ControlError::Unsupported(format!("no D-Bus session bus: {e}")))?;
-        let dbus = zbus::blocking::fdo::DBusProxy::new(&conn)
-            .map_err(|e| ControlError::Platform(e.to_string()))?;
-        let names = dbus
-            .list_names()
-            .map_err(|e| ControlError::Platform(e.to_string()))?;
-        let player = names
-            .iter()
-            .map(|n| n.as_str().to_owned())
-            .find(|n| n.starts_with("org.mpris.MediaPlayer2."))
+        let conn = session()?;
+        let player = pick_player(&conn)?
             .ok_or_else(|| ControlError::Unsupported("no MPRIS media player is running".into()))?;
         let method = match key {
             MediaKey::PlayPause => "PlayPause",
@@ -125,13 +168,60 @@ impl MediaControl for Mpris {
         };
         conn.call_method(
             Some(player.as_str()),
-            "/org/mpris/MediaPlayer2",
-            Some("org.mpris.MediaPlayer2.Player"),
+            MPRIS_PATH,
+            Some(PLAYER_IFACE),
             method,
             &(),
         )
         .map_err(|e| ControlError::Platform(e.to_string()))?;
         Ok(())
+    }
+
+    fn status(&self) -> Result<MediaStatus, ControlError> {
+        let conn = session()?;
+        let Some(name) = pick_player(&conn)? else {
+            return Ok(MediaStatus::none());
+        };
+        let p = player_proxy(&conn, &name)?;
+        let status = match p.get_property::<String>("PlaybackStatus").ok().as_deref() {
+            Some("Playing") => PlaybackStatus::Playing,
+            Some("Paused") => PlaybackStatus::Paused,
+            Some("Stopped") => PlaybackStatus::Stopped,
+            _ => PlaybackStatus::Unknown,
+        };
+        let meta: HashMap<String, OwnedValue> = p.get_property("Metadata").unwrap_or_default();
+        // mpris:length and Position are microseconds.
+        let duration_ms = meta
+            .get("mpris:length")
+            .and_then(|v| v.try_clone().ok())
+            .and_then(|v| i64::try_from(v).ok().or(None))
+            .filter(|d| *d > 0)
+            .map(|d| (d / 1000) as u64);
+        let position_ms = p
+            .get_property::<i64>("Position")
+            .ok()
+            .filter(|_| duration_ms.is_some())
+            .map(|d| (d.max(0) / 1000) as u64);
+        let flag = |k: &str| p.get_property::<bool>(k).unwrap_or(false);
+        Ok(MediaStatus {
+            active: true,
+            app: Some(
+                name.trim_start_matches("org.mpris.MediaPlayer2.")
+                    .split('.')
+                    .next()
+                    .unwrap_or("")
+                    .to_owned(),
+            ),
+            title: meta_str(&meta, "xesam:title"),
+            artist: meta_artists(&meta),
+            album: meta_str(&meta, "xesam:album"),
+            status,
+            position_ms,
+            duration_ms,
+            can_play_pause: flag("CanPlay") || flag("CanPause"),
+            can_next: flag("CanGoNext"),
+            can_previous: flag("CanGoPrevious"),
+        })
     }
 }
 

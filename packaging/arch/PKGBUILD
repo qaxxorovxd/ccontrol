@@ -1,6 +1,6 @@
 # Maintainer: ccontrol maintainers
 pkgname=ccontrol
-pkgver=0.1.0
+pkgver=0.2.0
 pkgrel=1
 pkgdesc="ccontrol desktop agent (control this PC from a paired Android phone)"
 arch=('x86_64')

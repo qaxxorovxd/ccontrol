@@ -76,6 +76,8 @@ fn session_type() -> String {
 #[derive(Debug, Clone, Default)]
 pub struct Probes {
     pub volume: Option<Result<(), String>>,
+    pub media: Option<Result<(), String>>,
+    pub windows: Option<Result<(), String>>,
 }
 
 pub fn probe() -> Probes {
@@ -83,7 +85,19 @@ pub fn probe() -> Probes {
         .get()
         .map(|_| ())
         .map_err(|e| e.to_string());
-    Probes { volume: Some(vol) }
+    let media = ccontrol_system_control::media()
+        .status()
+        .map(|_| ())
+        .map_err(|e| e.to_string());
+    let windows = ccontrol_system_control::windows_adapter()
+        .list()
+        .map(|_| ())
+        .map_err(|e| e.to_string());
+    Probes {
+        volume: Some(vol),
+        media: Some(media),
+        windows: Some(windows),
+    }
 }
 
 pub fn build_manifest(
@@ -110,6 +124,15 @@ pub fn build_manifest(
         CapabilityStatus::available(Some(Scope::TelemetryRead.as_str())),
     );
 
+    let from_probe = |p: &Option<Result<(), String>>, scope: Scope, note: Option<&str>| match p {
+        Some(Ok(())) => CapabilityStatus {
+            available: true,
+            reason: note.map(str::to_owned),
+            scope: Some(scope.as_str().into()),
+        },
+        Some(Err(e)) => CapabilityStatus::unavailable(e.clone(), Some(scope.as_str())),
+        None => CapabilityStatus::unavailable("not probed", Some(scope.as_str())),
+    };
     match &probes.volume {
         Some(Ok(())) => put(
             "audio.master_volume",
@@ -139,6 +162,18 @@ pub fn build_manifest(
         _ => CapabilityStatus::unavailable("No user session", Some(Scope::MediaControl.as_str())),
     };
     put("media.keys", media);
+    put(
+        "media.status",
+        from_probe(
+            &probes.media,
+            Scope::MediaControl,
+            Some(if os.family == "windows" {
+                "System Media Transport Controls (apps that publish now-playing info)"
+            } else {
+                "MPRIS players on the D-Bus session bus"
+            }),
+        ),
+    );
 
     // Per-app audio capture: report OS-level feasibility truthfully, but the
     // engine is not shipped yet, so it is unavailable.
@@ -183,7 +218,22 @@ pub fn build_manifest(
         ),
     );
     put("notifications.mirror", not_yet(Scope::NotificationsRead));
-    put("process.list", not_yet(Scope::DeviceRead));
+    put(
+        "process.list",
+        CapabilityStatus::available(Some(Scope::DeviceRead.as_str())),
+    );
+    put(
+        "process.terminate",
+        CapabilityStatus {
+            available: true,
+            reason: Some("Own-user processes only; critical system processes are protected".into()),
+            scope: Some(Scope::ProcessTerminate.as_str().into()),
+        },
+    );
+    put(
+        "apps.windows",
+        from_probe(&probes.windows, Scope::DeviceRead, None),
+    );
     put("files.browse", not_yet(Scope::FilesRead));
     put("power.control", not_yet(Scope::PowerControl));
     put("commands.custom", not_yet(Scope::CommandsRun));

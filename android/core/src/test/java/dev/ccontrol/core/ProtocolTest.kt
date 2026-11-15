@@ -57,7 +57,25 @@ class ProtocolTest {
         ) as Message.HelloAckMsg
         assertTrue(m.ack.paired)
         assertEquals("windows", m.ack.manifest!!.osFamily)
-        assertEquals(false, m.ack.manifest!!.capabilities["audio.route"]!!.available)
+        assertEquals(false, m.ack.manifest.capabilities["audio.route"]!!.available)
+    }
+
+    @Test fun phase2ShapesMatchRust() {
+        assertEquals(
+            """{"type":"request","id":4,"action":"process.terminate","pid":42,"name":"notepad.exe","force":false}""",
+            Wire.encode(Message.Request(4, Action.ProcessTerminate(42, "notepad.exe", false))),
+        )
+        assertEquals(
+            """{"type":"request","id":5,"action":"app.close","window_id":7,"pid":42}""",
+            Wire.encode(Message.Request(5, Action.AppClose(7, 42))),
+        )
+        assertEquals("""{"type":"request","id":6,"action":"pairing.unpair"}""", Wire.encode(Message.Request(6, Action.Unpair)))
+        val t = Wire.decodeResult(Wire.json.parseToJsonElement("""{"kind":"terminated","pid":42,"method":"graceful","exited":true}""") as kotlinx.serialization.json.JsonObject)
+        assertEquals(true, (t as ActionResult.Terminated).outcome.exited)
+        val m = Wire.decodeResult(Wire.json.parseToJsonElement("""{"kind":"media_status","active":false,"status":"stopped","can_play_pause":false,"can_next":false,"can_previous":false}""") as kotlinx.serialization.json.JsonObject)
+        assertEquals(false, (m as ActionResult.Media).status.active)
+        val tel = Wire.decodeResult(Wire.json.parseToJsonElement("""{"kind":"telemetry","cpu_percent":1.0,"cpu_count":8,"memory_used_bytes":1,"memory_total_bytes":2,"uptime_secs":3,"disks":[{"mount":"C:\\","name":"","total_bytes":10,"available_bytes":5,"removable":false}]}""") as kotlinx.serialization.json.JsonObject)
+        assertEquals("C:\\", (tel as ActionResult.TelemetryResult).telemetry.disks.single().mount)
     }
 
     @Test(expected = IllegalArgumentException::class) fun rejectsOutOfRangeVolume() {

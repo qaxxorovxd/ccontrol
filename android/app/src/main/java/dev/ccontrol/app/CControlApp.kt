@@ -45,4 +45,4 @@ class CControlApp : Application() {
     }
 }
 
-object BuildConfigVersion { const val NAME = "0.1.0" }
+object BuildConfigVersion { const val NAME = "0.2.0" }

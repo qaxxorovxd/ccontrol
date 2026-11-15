@@ -5,7 +5,9 @@ use ccontrol_capabilities::{build_manifest, OsInfo, Probes};
 use ccontrol_persistence::Store;
 use ccontrol_protocol::CapabilityManifest;
 use ccontrol_security::DeviceIdentity;
-use ccontrol_system_control::{MediaControl, TelemetrySampler, VolumeControl};
+use ccontrol_system_control::{
+    MediaControl, ProcessManager, TelemetrySampler, VolumeControl, WindowControl,
+};
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 
@@ -14,6 +16,8 @@ pub struct Adapters {
     pub volume: Box<dyn VolumeControl>,
     pub media: Box<dyn MediaControl>,
     pub telemetry: TelemetrySampler,
+    pub processes: ProcessManager,
+    pub windows: Box<dyn WindowControl>,
 }
 
 impl Adapters {
@@ -22,6 +26,8 @@ impl Adapters {
             volume: ccontrol_system_control::volume(),
             media: ccontrol_system_control::media(),
             telemetry: TelemetrySampler::new(),
+            processes: ProcessManager::new(),
+            windows: ccontrol_system_control::windows_adapter(),
         }
     }
 }
@@ -56,6 +62,20 @@ impl AppState {
             .unwrap_or_else(|| os.hostname.clone());
         let probes = Probes {
             volume: Some(adapters.volume.get().map(|_| ()).map_err(|e| e.to_string())),
+            media: Some(
+                adapters
+                    .media
+                    .status()
+                    .map(|_| ())
+                    .map_err(|e| e.to_string()),
+            ),
+            windows: Some(
+                adapters
+                    .windows
+                    .list()
+                    .map(|_| ())
+                    .map_err(|e| e.to_string()),
+            ),
         };
         let manifest = build_manifest(
             &identity.fingerprint,

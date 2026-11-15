@@ -8,7 +8,7 @@ description = "Native OS adapters (audio volume, media keys, telemetry) behind o
 [dependencies]
 ccontrol-protocol.workspace = true
 thiserror.workspace = true
-sysinfo = { version = "0.33", default-features = false, features = ["system"] }
+sysinfo = { version = "0.33", default-features = false, features = ["system", "disk"] }
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.61", features = [
@@ -21,6 +21,11 @@ windows = { version = "0.61", features = [
   "Win32_UI_Input_KeyboardAndMouse",
   "Win32_UI_Shell_PropertiesSystem",
   "Win32_Devices_FunctionDiscovery",
+  "Win32_Graphics_Dwm",
+  "Win32_UI_WindowsAndMessaging",
+  "Win32_System_Power",
+  "Foundation",
+  "Media_Control",
 ] }
 
 [target.'cfg(target_os = "linux")'.dependencies]

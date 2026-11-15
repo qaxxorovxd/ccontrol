@@ -13,7 +13,7 @@ use std::path::PathBuf;
 use tokio::net::TcpStream;
 
 fn usage() -> ! {
-    eprintln!("usage: ccontrol-ctl --state DIR (pair ADDR | call ADDR ACTION [ARG])\n  actions: device.info telemetry.get volume.get volume.set <0..1> volume.mute <true|false> media.key <play_pause|next|previous|stop>");
+    eprintln!("usage: ccontrol-ctl --state DIR (pair ADDR | call ADDR ACTION [ARG])\n  actions: device.info telemetry.get media.status process.list app.list process.terminate <pid:name[:force]> app.close <window_id:pid> pairing.unpair volume.get volume.set <0..1> volume.mute <true|false> media.key <play_pause|next|previous|stop>");
     std::process::exit(2)
 }
 
@@ -28,6 +28,27 @@ fn parse_action(name: &str, arg: Option<&String>) -> anyhow::Result<Action> {
         "volume.mute" => Action::VolumeMute {
             muted: arg.context("true|false")?.parse()?,
         },
+        "media.status" => Action::MediaStatus,
+        "process.list" => Action::ProcessList,
+        "app.list" => Action::AppList,
+        "pairing.unpair" => Action::Unpair,
+        "process.terminate" => {
+            // ARG = pid:name[:force]
+            let v: Vec<&str> = arg.context("pid:name[:force]")?.splitn(3, ':').collect();
+            Action::ProcessTerminate {
+                pid: v[0].parse()?,
+                name: v.get(1).context("name")?.to_string(),
+                force: v.get(2) == Some(&"force"),
+            }
+        }
+        "app.close" => {
+            // ARG = window_id:pid
+            let v: Vec<&str> = arg.context("window_id:pid")?.split(':').collect();
+            Action::AppClose {
+                window_id: v[0].parse()?,
+                pid: v.get(1).context("pid")?.parse()?,
+            }
+        }
         "media.key" => Action::MediaKey {
             key: serde_json::from_str(&format!("\"{}\"", arg.context("key")?))?,
         },

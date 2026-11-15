@@ -3,7 +3,7 @@
 Local-first control of your Windows and Linux computers from an Android phone, with
 mutually authenticated pairing, per-phone permissions, and honest capability reporting.
 
-> **Status: Phase 1 (trust + control vertical slice) is working.** Audio routing,
+> **Status: v0.2 — Phases 1–2 (trust, pairing, device controls) are working.** Audio routing,
 > notifications, the 3D workspace, remote input, files, power and custom commands are **not
 > built yet**. See [PROGRESS.md](PROGRESS.md) and the
 > [feature matrix](docs/os-capabilities/FEATURE_MATRIX.md).
@@ -14,7 +14,9 @@ mutually authenticated pairing, per-phone permissions, and honest capability rep
 * Pairing: QR code or LAN discovery or manual IP. A 6-digit commit/reveal code appears on both
   screens, and the desktop owner approves and picks the permissions.
 * Phones reconnect by key, not IP, with no QR again. Revoking on the desktop kicks the phone immediately.
-* Controls: master volume and mute (Windows Core Audio verified; Linux via PipeWire/Pulse),
+* Controls: master volume and mute (Windows Core Audio verified; Linux via PipeWire/Pulse), now playing
+  with session media controls, processes (graceful quit, confirmed force quit, protected system
+  processes), app windows (Windows), disks/battery,
   media keys, CPU/RAM/uptime telemetry, capability manifest.
 * Android app (Kotlin + Compose, minSdk 29, targetSdk 37): dashboard, add/pair, device screen
   with honest disabled states.

@@ -1,6 +1,10 @@
-//! Windows adapters: Core Audio (IAudioEndpointVolume) and media keys via SendInput.
+//! Windows adapters: Core Audio (IAudioEndpointVolume), media (SMTC with
+//! SendInput media-key fallback) and top-level windows.
 
-use crate::{check_level, ControlError, MediaControl, VolumeControl};
+pub mod apps;
+pub mod smtc;
+
+use crate::{check_level, ControlError, VolumeControl};
 use ccontrol_protocol::{MediaKey, VolumeState};
 use windows::core::{GUID, PWSTR};
 use windows::Win32::Devices::FunctionDiscovery::PKEY_Device_FriendlyName;
@@ -18,14 +22,14 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
     VK_MEDIA_NEXT_TRACK, VK_MEDIA_PLAY_PAUSE, VK_MEDIA_PREV_TRACK, VK_MEDIA_STOP,
 };
 
-fn plat(e: windows::core::Error) -> ControlError {
+pub(crate) fn plat(e: windows::core::Error) -> ControlError {
     ControlError::Platform(format!("{e}"))
 }
 
 /// COM apartment guard for the current (blocking pool) thread.
-struct Com(bool);
+pub(crate) struct Com(bool);
 impl Com {
-    fn init() -> Self {
+    pub(crate) fn init() -> Self {
         // S_OK or S_FALSE both require a matching CoUninitialize.
         let hr = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) };
         Com(hr.is_ok())
@@ -91,10 +95,9 @@ impl VolumeControl for CoreAudioVolume {
     }
 }
 
-pub struct MediaKeys;
-
-impl MediaControl for MediaKeys {
-    fn send(&self, key: MediaKey) -> Result<(), ControlError> {
+/// Global media keys (fallback when no SMTC session is available).
+pub(crate) fn send_media_key(key: MediaKey) -> Result<(), ControlError> {
+    {
         let vk: VIRTUAL_KEY = match key {
             MediaKey::PlayPause => VK_MEDIA_PLAY_PAUSE,
             MediaKey::Next => VK_MEDIA_NEXT_TRACK,

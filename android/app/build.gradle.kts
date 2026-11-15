@@ -3,7 +3,7 @@ plugins {
     alias(libs.plugins.kotlin.compose)
 }
 
-val versionNameStr = "0.1.0"
+val versionNameStr = "0.2.0"
 
 android {
     namespace = "dev.ccontrol.app"
@@ -13,7 +13,7 @@ android {
         applicationId = "dev.ccontrol.app"
         minSdk = 29
         targetSdk = 37
-        versionCode = 1
+        versionCode = 2
         versionName = versionNameStr
     }
 

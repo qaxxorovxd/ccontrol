@@ -109,6 +109,24 @@ pub enum Action {
     VolumeMute { muted: bool },
     #[serde(rename = "media.key")]
     MediaKey { key: MediaKey },
+    /// Now-playing information of the active media session.
+    #[serde(rename = "media.status")]
+    MediaStatus,
+    #[serde(rename = "process.list")]
+    ProcessList,
+    /// Graceful stop first (`force=false`); force kill only after the user
+    /// confirmed it. `name` must still match `pid` (guards against PID reuse).
+    #[serde(rename = "process.terminate")]
+    ProcessTerminate { pid: u32, name: String, force: bool },
+    /// Top-level application windows (distinct from processes).
+    #[serde(rename = "app.list")]
+    AppList,
+    /// Ask a window to close (like clicking its X); the app may prompt to save.
+    #[serde(rename = "app.close")]
+    AppClose { window_id: u64, pid: u32 },
+    /// The controller removes its own pairing on this computer.
+    #[serde(rename = "pairing.unpair")]
+    Unpair,
 }
 
 impl Action {
@@ -120,19 +138,29 @@ impl Action {
             Action::VolumeSet { .. } => "volume.set",
             Action::VolumeMute { .. } => "volume.mute",
             Action::MediaKey { .. } => "media.key",
+            Action::MediaStatus => "media.status",
+            Action::ProcessList => "process.list",
+            Action::ProcessTerminate { .. } => "process.terminate",
+            Action::AppList => "app.list",
+            Action::AppClose { .. } => "app.close",
+            Action::Unpair => "pairing.unpair",
         }
     }
 
-    /// Scope a controller must hold to invoke this action.
-    pub fn required_scope(&self) -> Scope {
-        match self {
-            Action::DeviceInfo => Scope::DeviceRead,
+    /// Scope a controller must hold to invoke this action. `None` means any
+    /// paired controller may call it (it only affects the caller itself).
+    pub fn required_scope(&self) -> Option<Scope> {
+        Some(match self {
+            Action::DeviceInfo | Action::ProcessList | Action::AppList => Scope::DeviceRead,
             Action::TelemetryGet => Scope::TelemetryRead,
-            Action::VolumeGet | Action::VolumeSet { .. } | Action::VolumeMute { .. } => {
-                Scope::MediaControl
-            }
-            Action::MediaKey { .. } => Scope::MediaControl,
-        }
+            Action::VolumeGet
+            | Action::VolumeSet { .. }
+            | Action::VolumeMute { .. }
+            | Action::MediaKey { .. }
+            | Action::MediaStatus => Scope::MediaControl,
+            Action::ProcessTerminate { .. } | Action::AppClose { .. } => Scope::ProcessTerminate,
+            Action::Unpair => return None,
+        })
     }
 
     /// Validate parameters before dispatch.
@@ -141,6 +169,12 @@ impl Action {
             Action::VolumeSet { level } if !level.is_finite() || !(0.0..=1.0).contains(level) => {
                 Err("level must be within 0.0..=1.0".into())
             }
+            Action::ProcessTerminate { pid, name, .. }
+                if *pid == 0 || name.is_empty() || name.len() > 260 =>
+            {
+                Err("pid and process name are required".into())
+            }
+            Action::AppClose { window_id: 0, .. } => Err("window_id is required".into()),
             _ => Ok(()),
         }
     }
@@ -162,7 +196,119 @@ pub enum ActionResult {
     Manifest { manifest: CapabilityManifest },
     Telemetry(Telemetry),
     Volume(VolumeState),
+    MediaStatus(MediaStatus),
+    Processes { processes: Vec<ProcessInfo> },
+    Terminated(TerminateOutcome),
+    Apps { windows: Vec<AppWindow> },
     Done,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DiskInfo {
+    pub mount: String,
+    pub name: String,
+    pub total_bytes: u64,
+    pub available_bytes: u64,
+    pub removable: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PlaybackStatus {
+    Playing,
+    Paused,
+    Stopped,
+    Unknown,
+}
+
+/// `active=false` means no media session exists right now.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MediaStatus {
+    pub active: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub app: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub artist: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub album: Option<String>,
+    pub status: PlaybackStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub position_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration_ms: Option<u64>,
+    pub can_play_pause: bool,
+    pub can_next: bool,
+    pub can_previous: bool,
+}
+
+impl MediaStatus {
+    pub fn none() -> Self {
+        Self {
+            active: false,
+            app: None,
+            title: None,
+            artist: None,
+            album: None,
+            status: PlaybackStatus::Stopped,
+            position_ms: None,
+            duration_ms: None,
+            can_play_pause: false,
+            can_next: false,
+            can_previous: false,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ProcessInfo {
+    pub pid: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_pid: Option<u32>,
+    pub name: String,
+    /// Only present when the OS lets the agent read it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exe: Option<String>,
+    /// Share of total machine CPU (0..=100), like Task Manager.
+    pub cpu_percent: f32,
+    pub memory_bytes: u64,
+    pub status: String,
+    pub start_time: u64,
+    /// Runs as the same OS user as the agent.
+    pub same_user: bool,
+    /// Can be ended from ccontrol (same user, not critical, not the agent).
+    pub terminable: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub protected_reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TerminateMethod {
+    /// Windows: WM_CLOSE to the process's windows. Linux: SIGTERM.
+    Graceful,
+    Force,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TerminateOutcome {
+    pub pid: u32,
+    pub method: TerminateMethod,
+    /// Whether the process had exited when the agent stopped waiting.
+    pub exited: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AppWindow {
+    pub window_id: u64,
+    pub pid: u32,
+    pub process_name: String,
+    pub title: String,
+    pub focused: bool,
+    pub minimized: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -174,6 +320,10 @@ pub struct Telemetry {
     pub uptime_secs: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub battery_percent: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub battery_charging: Option<bool>,
+    #[serde(default)]
+    pub disks: Vec<DiskInfo>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -204,6 +354,8 @@ pub enum ErrorCode {
     PairingTimeout,
     PairingFailed,
     ScopeDenied,
+    /// Refused by policy (critical process, other user's process, ...).
+    Forbidden,
     Unsupported,
     InvalidRequest,
     RateLimited,
@@ -291,6 +443,58 @@ mod tests {
             r#"{"type":"request","id":1,"action":"shell.exec","cmd":"rm -rf /"}"#,
         );
         assert!(r.is_err());
+    }
+
+    #[test]
+    fn phase2_action_shapes() {
+        let m = Message::Request {
+            id: 4,
+            action: Action::ProcessTerminate {
+                pid: 42,
+                name: "notepad.exe".into(),
+                force: false,
+            },
+        };
+        assert_eq!(
+            serde_json::to_string(&m).unwrap(),
+            r#"{"type":"request","id":4,"action":"process.terminate","pid":42,"name":"notepad.exe","force":false}"#
+        );
+        let m = Message::Request {
+            id: 5,
+            action: Action::AppClose {
+                window_id: 7,
+                pid: 42,
+            },
+        };
+        assert_eq!(
+            serde_json::to_string(&m).unwrap(),
+            r#"{"type":"request","id":5,"action":"app.close","window_id":7,"pid":42}"#
+        );
+        assert_eq!(Action::Unpair.required_scope(), None);
+        assert_eq!(
+            Action::AppClose {
+                window_id: 1,
+                pid: 1
+            }
+            .required_scope(),
+            Some(Scope::ProcessTerminate)
+        );
+        let r = ActionResult::Terminated(TerminateOutcome {
+            pid: 42,
+            method: TerminateMethod::Graceful,
+            exited: true,
+            note: None,
+        });
+        assert_eq!(
+            serde_json::to_string(&r).unwrap(),
+            r#"{"kind":"terminated","pid":42,"method":"graceful","exited":true}"#
+        );
+        // Telemetry from Phase 1 agents (no disks) still decodes.
+        let t: Telemetry = serde_json::from_str(
+            r#"{"cpu_percent":1.0,"cpu_count":2,"memory_used_bytes":1,"memory_total_bytes":2,"uptime_secs":3}"#,
+        )
+        .unwrap();
+        assert!(t.disks.is_empty());
     }
 
     #[test]

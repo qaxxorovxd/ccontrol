@@ -60,6 +60,11 @@ import dev.ccontrol.core.net.RemoteException
 import dev.ccontrol.core.protocol.Action
 import dev.ccontrol.core.protocol.ActionResult
 import dev.ccontrol.core.protocol.MediaKey
+import dev.ccontrol.core.protocol.MediaStatus
+import androidx.compose.foundation.clickable
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.Pause
+import androidx.compose.ui.text.style.TextOverflow
 import dev.ccontrol.core.protocol.Scopes
 import dev.ccontrol.core.protocol.Telemetry
 import dev.ccontrol.core.protocol.VolumeState
@@ -69,9 +74,10 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
-private fun Throwable.userMessage(): String = when (this) {
+internal fun Throwable.userMessage(): String = when (this) {
     is RemoteException -> when (error.code) {
         "scope_denied" -> "Not permitted: ${error.message}"
+        "forbidden" -> "Protected: ${error.message}"
         "unsupported" -> "Not supported on this computer: ${error.message}"
         else -> error.message
     }
@@ -79,7 +85,13 @@ private fun Throwable.userMessage(): String = when (this) {
 }
 
 @Composable
-fun DeviceScreen(app: CControlApp, deviceId: String, onBack: () -> Unit) {
+fun DeviceScreen(
+    app: CControlApp,
+    deviceId: String,
+    onBack: () -> Unit,
+    onOpenProcesses: () -> Unit = {},
+    onOpenApps: () -> Unit = {},
+) {
     val devices by app.repo.devices.collectAsStateWithLifecycle()
     val states by app.connections.states.collectAsStateWithLifecycle()
     val device = devices.firstOrNull { it.deviceId == deviceId }
@@ -99,6 +111,7 @@ fun DeviceScreen(app: CControlApp, deviceId: String, onBack: () -> Unit) {
     var error by remember { mutableStateOf<String?>(null) }
     var sendJob by remember { mutableStateOf<Job?>(null) }
     var confirmForget by remember { mutableStateOf(false) }
+    var media by remember { mutableStateOf<MediaStatus?>(null) }
     var renaming by remember { mutableStateOf(false) }
 
     suspend fun call(a: Action): ActionResult? = try {
@@ -118,6 +131,14 @@ fun DeviceScreen(app: CControlApp, deviceId: String, onBack: () -> Unit) {
         }
     }
     // Telemetry refreshes only while this screen is visible and the computer is online.
+    val mediaStatusCap = manifest?.capabilities?.get("media.status")
+    // Now playing refreshes every 2 s while visible.
+    LaunchedEffect(online != null, canMedia, mediaStatusCap?.available) {
+        while (isActive && online != null && canMedia && mediaStatusCap?.available == true) {
+            (runCatching { app.connections.call(deviceId, Action.MediaStatusGet) }.getOrNull() as? ActionResult.Media)?.let { media = it.status }
+            delay(2000)
+        }
+    }
     LaunchedEffect(online != null, canTelemetry) {
         while (isActive && online != null && canTelemetry) {
             (runCatching { app.connections.call(deviceId, Action.TelemetryGet) }.getOrNull() as? ActionResult.TelemetryResult)?.let { telemetry = it.telemetry }
@@ -213,10 +234,22 @@ fun DeviceScreen(app: CControlApp, deviceId: String, onBack: () -> Unit) {
                 mediaCap?.available == false -> Disabled(mediaCap.reason ?: "Unavailable")
                 online == null -> Disabled("Available when the computer is online.")
                 else -> {
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
-                        MediaButton(Icons.Filled.SkipPrevious, "Previous track") { scope.launch { call(Action.Media(MediaKey.Previous)) } }
-                        MediaButton(Icons.Filled.PlayArrow, "Play or pause") { scope.launch { call(Action.Media(MediaKey.PlayPause)) } }
-                        MediaButton(Icons.Filled.SkipNext, "Next track") { scope.launch { call(Action.Media(MediaKey.Next)) } }
+                    NowPlaying(media)
+                    val m = media
+                    // Without status info (or with an active session) enable what the OS allows.
+                    val known = m?.active == true
+                    Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
+                        MediaButton(Icons.Filled.SkipPrevious, "Previous track", enabled = !known || m.canPrevious) {
+                            scope.launch { call(Action.Media(MediaKey.Previous)); media = refreshMedia(app, deviceId) ?: media }
+                        }
+                        MediaButton(
+                            if (m?.isPlaying == true) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                            if (m?.isPlaying == true) "Pause" else "Play",
+                            enabled = !known || m.canPlayPause,
+                        ) { scope.launch { call(Action.Media(MediaKey.PlayPause)); media = refreshMedia(app, deviceId) ?: media } }
+                        MediaButton(Icons.Filled.SkipNext, "Next track", enabled = !known || m.canNext) {
+                            scope.launch { call(Action.Media(MediaKey.Next)); media = refreshMedia(app, deviceId) ?: media }
+                        }
                     }
                     mediaCap?.reason?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = Palette.Muted, modifier = Modifier.padding(top = 8.dp)) }
                 }
@@ -233,9 +266,37 @@ fun DeviceScreen(app: CControlApp, deviceId: String, onBack: () -> Unit) {
                 else -> {
                     Meter("CPU", t.cpuPercent / 100f, "%.0f%% · %d cores".format(t.cpuPercent, t.cpuCount))
                     Meter("Memory", t.memoryUsedBytes.toFloat() / t.memoryTotalBytes.coerceAtLeast(1), "${formatBytes(t.memoryUsedBytes)} / ${formatBytes(t.memoryTotalBytes)}")
-                    Text("Up ${formatUptime(t.uptimeSecs)}", style = MaterialTheme.typography.bodySmall, color = Palette.Muted, modifier = Modifier.padding(top = 6.dp))
+                    t.disks.forEach { d ->
+                        val used = d.totalBytes - d.availableBytes
+                        Meter(
+                            "Disk ${d.mount.trimEnd('\\', '/').ifEmpty { "/" }}" + if (d.removable) " (removable)" else "",
+                            used.toFloat() / d.totalBytes.coerceAtLeast(1),
+                            "${formatBytes(d.availableBytes)} free of ${formatBytes(d.totalBytes)}",
+                        )
+                    }
+                    Text(
+                        listOfNotNull(
+                            "Up ${formatUptime(t.uptimeSecs)}",
+                            t.batteryPercent?.let { "Battery ${it.toInt()}%" + when (t.batteryCharging) { true -> " · plugged in"; false -> " · on battery"; null -> "" } },
+                        ).joinToString("  ·  "),
+                        style = MaterialTheme.typography.bodySmall, color = Palette.Muted, modifier = Modifier.padding(top = 6.dp),
+                    )
                 }
             }
+        }
+
+        SectionLabel("Apps")
+        Panel {
+            val canRead = Scopes.DEVICE_READ in scopes
+            val winCap = manifest?.capabilities?.get("apps.windows")
+            NavRow(
+                "Apps & windows",
+                if (winCap?.available == false) winCap.reason else "Open windows; close them like clicking X",
+                enabled = canRead && online != null && winCap?.available != false,
+                onClick = onOpenApps,
+            )
+            NavRow("Processes", "CPU and memory per process; quit or force quit", enabled = canRead && online != null, onClick = onOpenProcesses)
+            if (!canRead) Disabled("Needs device.read, granted on the computer.")
         }
 
         if (manifest != null) {
@@ -278,8 +339,16 @@ fun DeviceScreen(app: CControlApp, deviceId: String, onBack: () -> Unit) {
         AlertDialog(
             onDismissRequest = { confirmForget = false },
             title = { Text("Forget ${device.displayName}?") },
-            text = { Text("This phone will stop connecting to it and you will need to pair again. To also remove this phone's access on the computer, revoke it in the computer's ccontrol settings.") },
-            confirmButton = { TextButton(onClick = { confirmForget = false; app.connections.forget(deviceId); onBack() }) { Text("Forget", color = Palette.Bad) } },
+            text = { Text("This phone will stop connecting to it and you will need to pair again. If the computer is online, this phone's access there is removed too; otherwise revoke it in the computer's ccontrol settings.") },
+            confirmButton = { TextButton(onClick = {
+                confirmForget = false
+                scope.launch {
+                    // Remove this phone's access on the computer too, when reachable.
+                    if (online != null) runCatching { app.connections.call(deviceId, Action.Unpair) }
+                    app.connections.forget(deviceId)
+                    onBack()
+                }
+            }) { Text("Forget", color = Palette.Bad) } },
             dismissButton = { TextButton(onClick = { confirmForget = false }) { Text("Cancel") } },
         )
     }
@@ -291,8 +360,54 @@ private fun Disabled(reason: String) {
 }
 
 @Composable
-private fun MediaButton(icon: ImageVector, label: String, onClick: () -> Unit) {
-    FilledTonalIconButton(onClick = onClick, modifier = Modifier.width(64.dp)) { Icon(icon, label) }
+private fun MediaButton(icon: ImageVector, label: String, enabled: Boolean = true, onClick: () -> Unit) {
+    FilledTonalIconButton(onClick = onClick, enabled = enabled, modifier = Modifier.width(64.dp)) { Icon(icon, label) }
+}
+
+private suspend fun refreshMedia(app: CControlApp, id: String): MediaStatus? {
+    delay(350) // let the player apply the command
+    return (runCatching { app.connections.call(id, Action.MediaStatusGet) }.getOrNull() as? ActionResult.Media)?.status
+}
+
+private fun formatMs(ms: Long): String = "%d:%02d".format(ms / 60000, (ms / 1000) % 60)
+
+@Composable
+private fun NowPlaying(m: MediaStatus?) {
+    when {
+        m == null -> {}
+        !m.active -> Text("Nothing is playing.", style = MaterialTheme.typography.bodyMedium, color = Palette.Muted)
+        else -> Column(Modifier.semantics(mergeDescendants = true) {}) {
+            Text(m.title ?: "Unknown title", style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(
+                listOfNotNull(m.artist, m.app?.let { "in $it" }).joinToString(" · ").ifEmpty { m.status },
+                style = MaterialTheme.typography.bodySmall, color = Palette.Muted, maxLines = 1, overflow = TextOverflow.Ellipsis,
+            )
+            val d = m.durationMs
+            if (d != null && d > 0) {
+                val pos = (m.positionMs ?: 0).coerceAtMost(d)
+                LinearProgressIndicator(
+                    progress = { pos.toFloat() / d },
+                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                    color = Palette.Violet, trackColor = Palette.SurfaceHigh,
+                )
+                Text("${formatMs(pos)} / ${formatMs(d)}", fontFamily = Mono, style = MaterialTheme.typography.bodySmall, color = Palette.Muted)
+            }
+        }
+    }
+}
+
+@Composable
+private fun NavRow(title: String, subtitle: String?, enabled: Boolean, onClick: () -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().clickable(enabled = enabled, onClick = onClick).padding(vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.bodyMedium, color = if (enabled) Palette.Text else Palette.Muted)
+            subtitle?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = Palette.Muted) }
+        }
+        Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, tint = Palette.Muted)
+    }
 }
 
 @Composable

@@ -1,5 +1,5 @@
 Name:           ccontrol
-Version:        0.1.0
+Version:        0.2.0
 Release:        1%{?dist}
 Summary:        ccontrol desktop agent (control this PC from a paired Android phone)
 License:        MIT OR Apache-2.0
@@ -35,5 +35,7 @@ cargo test --release --locked --workspace
 %{_datadir}/icons/hicolor/scalable/apps/ccontrol.svg
 
 %changelog
+* Sun Nov 15 2026 ccontrol maintainers - 0.2.0-1
+- Phase 2: processes, app windows, now playing, disks/battery, self-unpair.
 * Sun Nov 15 2026 ccontrol maintainers - 0.1.0-1
 - Phase 1: pairing, trust store, capability manifest, volume/media/telemetry.
